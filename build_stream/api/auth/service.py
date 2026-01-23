@@ -139,9 +139,7 @@ class AuthService:  # pylint: disable=too-few-public-methods
         """
         active_count = self.vault_client.get_active_client_count()
         if active_count >= 1:
-            logger.warning(
-                "Max client limit reached. Active clients: %d", active_count
-            )
+            logger.warning("Max client limit reached")
             raise MaxClientsReachedError(
                 "Maximum number of clients (1) already registered. "
                 "Only one active client is supported."
