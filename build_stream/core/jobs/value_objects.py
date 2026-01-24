@@ -89,6 +89,24 @@ class CorrelationId:
         return self.value
 
 
+class StageType(str, Enum):
+    """Canonical stage types for BuildStreaM workflow.
+    
+    All valid stage identifiers in the closed set. Used by StageName VO
+    for validation and by domain logic to avoid raw string comparisons.
+    """
+    
+    PARSE_CATALOG = "parse-catalog"
+    GENERATE_INPUT_FILES = "generate-input-files"
+    CREATE_LOCAL_REPOSITORY = "create-local-repository"
+    UPDATE_LOCAL_REPOSITORY = "update-local-repository"
+    CREATE_IMAGE_REPOSITORY = "create-image-repository"
+    BUILD_IMAGE = "build-image"
+    VALIDATE_IMAGE = "validate-image"
+    VALIDATE_IMAGE_ON_TEST = "validate-image-on-test"
+    PROMOTE = "promote"
+
+
 @dataclass(frozen=True)
 class StageName:
     """Canonical stage identifier.
@@ -102,18 +120,7 @@ class StageName:
     
     value: str
     
-    CANONICAL_STAGES: ClassVar[set[str]] = {
-        "parse-catalog",
-        "generate-input-files",
-        "create-local-repository",
-        "update-local-repository",
-        "create-image-repository",
-        "build-image",
-        "validate-image",
-        "validate-image-on-test",
-        "promote",
-    }
-    MAX_LENGTH: ClassVar[int] = 30  # Longest canonical stage name length
+    MAX_LENGTH: ClassVar[int] = 30
     
     def __post_init__(self) -> None:
         """Validate stage name is in canonical set and length."""
@@ -122,11 +129,16 @@ class StageName:
                 f"StageName length cannot exceed {self.MAX_LENGTH} characters, "
                 f"got {len(self.value)}"
             )
-        if self.value not in self.CANONICAL_STAGES:
+        try:
+            StageType(self.value)
+        except ValueError as exc:
             raise ValueError(
                 f"Invalid stage name: {self.value}. "
-                f"Must be one of: {sorted(self.CANONICAL_STAGES)}"
-            )
+                f"Must be one of: {sorted([stage.value for stage in StageType])}"
+            ) from exc
+
+    def as_enum(self) -> StageType:
+        return StageType(self.value)
     
     def __str__(self) -> str:
         """Return string representation."""

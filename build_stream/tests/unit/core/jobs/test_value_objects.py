@@ -25,6 +25,7 @@ from core.jobs.value_objects import (
     RequestFingerprint,
     StageName,
     StageState,
+    StageType,
 )
 
 
@@ -109,20 +110,10 @@ class TestStageName:
 
     def test_valid_stage_names(self):
         """All canonical stage names should be accepted."""
-        canonical_stages = [
-            "parse-catalog",
-            "generate-input-files",
-            "create-local-repository",
-            "update-local-repository",
-            "create-image-repository",
-            "build-image",
-            "validate-image",
-            "validate-image-on-test",
-            "promote",
-        ]
-        for stage in canonical_stages:
-            stage_name = StageName(stage)
-            assert stage_name.value == stage
+        for stage in StageType:
+            stage_name = StageName(stage.value)
+            assert stage_name.value == stage.value
+            assert stage_name.as_enum() == stage
 
     def test_invalid_stage_name(self):
         """Non-canonical stage name should be rejected."""
@@ -152,7 +143,7 @@ class TestStageName:
 
     def test_canonical_stages_count(self):
         """Verify we have exactly 9 canonical stages."""
-        assert len(StageName.CANONICAL_STAGES) == 9
+        assert len(StageType) == 9
 
 
 class TestIdempotencyKey:
