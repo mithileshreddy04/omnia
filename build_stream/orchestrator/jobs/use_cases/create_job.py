@@ -91,7 +91,7 @@ class CreateJobUseCase:
         fingerprint = self._compute_fingerprint(command)
         existing_job = self._check_idempotency(command, fingerprint)
         if existing_job is not None:
-            return self._to_response(existing_job)
+            return self._to_response(existing_job, is_new=False)
 
         job_id = self._generate_job_id(command)
 
@@ -185,9 +185,9 @@ class CreateJobUseCase:
         )
         self._audit_repo.save(event)
 
-    def _to_response(self, job: Job) -> JobResponse:
+    def _to_response(self, job: Job, is_new: bool = True) -> JobResponse:
         """Map domain entity to response DTO."""
-        return JobResponse.from_entity(job)
+        return JobResponse.from_entity(job, is_new=is_new)
 
     def _now_utc(self) -> datetime:
         """Return current UTC timestamp."""
@@ -195,10 +195,9 @@ class CreateJobUseCase:
     
     def _compute_fingerprint(self, command: CreateJobCommand) -> RequestFingerprint:
         """Compute request fingerprint for idempotency.
-        Fingerprint includes all semantically significant fields."""
+        Fingerprint includes only request payload, not auth-derived fields."""
 
         request_body = {
-            "client_id": str(command.client_id),
             "catalog_digest": command.catalog_digest,
         }
         return FingerprintService.compute(request_body)

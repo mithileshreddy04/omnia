@@ -34,6 +34,7 @@ class JobResponse:
         updated_at: Last modification timestamp (ISO 8601).
         version: Optimistic locking version.
         tombstoned: Soft delete flag.
+        is_new: True if job was newly created, False if retrieved from idempotency.
     """
     
     job_id: str
@@ -44,13 +45,15 @@ class JobResponse:
     updated_at: str
     version: int
     tombstoned: bool
+    is_new: bool = True
     
     @staticmethod
-    def from_entity(job) -> "JobResponse":
+    def from_entity(job, is_new: bool = True) -> "JobResponse":
         """Create response DTO from Job entity.
         
         Args:
             job: Job domain entity.
+            is_new: True if job was newly created, False if retrieved from idempotency.
             
         Returns:
             JobResponse DTO with serialized values.
@@ -64,4 +67,5 @@ class JobResponse:
             updated_at=job.updated_at.isoformat(),
             version=job.version,
             tombstoned=job.tombstoned,
+            is_new=is_new,
         )
