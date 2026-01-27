@@ -16,7 +16,7 @@
 
 import pytest
 
-from core.jobs.exceptions import (
+from build_stream.core.jobs.exceptions import (
     IdempotencyConflictError,
     InvalidStateTransitionError,
     JobAlreadyExistsError,

@@ -16,12 +16,12 @@
 
 import pytest
 
-from core.jobs.entities.job import Job
-from core.jobs.exceptions import (
+from build_stream.core.jobs.entities.job import Job
+from build_stream.core.jobs.exceptions import (
     InvalidStateTransitionError,
     TerminalStateViolationError,
 )
-from core.jobs.value_objects import ClientId, JobId, JobState
+from build_stream.core.jobs.value_objects import ClientId, JobId, JobState
 
 
 class TestJob:

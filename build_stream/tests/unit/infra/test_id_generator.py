@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Unit tests for UUIDv7Generator infrastructure component."""
+
 import re
 
-from infra.id_generator import UUIDv7Generator
+from build_stream.infra.id_generator import UUIDv7Generator
 
 
 class TestUUIDv7Generator:
+    """Tests covering UUIDv7Generator behavior."""
+
     def test_generate_returns_valid_job_id(self) -> None:
+        """Generator should produce a JobId string of expected length."""
         generator = UUIDv7Generator()
 
         job_id = generator.generate()
@@ -27,6 +32,7 @@ class TestUUIDv7Generator:
         assert len(job_id.value) == 36
 
     def test_generate_returns_uuid_v7_format(self) -> None:
+        """Generated JobId must conform to UUID v7 format."""
         generator = UUIDv7Generator()
 
         job_id = generator.generate()
@@ -37,6 +43,7 @@ class TestUUIDv7Generator:
         )
 
     def test_generate_is_unique(self) -> None:
+        """Generator should yield unique IDs over multiple invocations."""
         generator = UUIDv7Generator()
 
         generated = {generator.generate().value for _ in range(50)}

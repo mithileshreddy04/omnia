@@ -18,8 +18,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from core.jobs.entities.audit import AuditEvent
-from core.jobs.value_objects import ClientId, CorrelationId, JobId
+from build_stream.core.jobs.entities.audit import AuditEvent
+from build_stream.core.jobs.value_objects import ClientId, CorrelationId, JobId
 
 
 class TestAuditEvent:

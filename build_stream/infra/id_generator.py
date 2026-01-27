@@ -21,9 +21,9 @@ TODO: Replace with uuid7 library when available in standard library.
 import time
 import uuid
 
-from core.jobs.exceptions import JobDomainError
-from core.jobs.repositories import JobIdGenerator, UUIDGenerator
-from core.jobs.value_objects import JobId
+from build_stream.core.jobs.exceptions import JobDomainError
+from build_stream.core.jobs.repositories import JobIdGenerator, UUIDGenerator
+from build_stream.core.jobs.value_objects import JobId
 
 class UUIDv7Generator(JobIdGenerator):
     """Temporary UUID v7 generator implementation.

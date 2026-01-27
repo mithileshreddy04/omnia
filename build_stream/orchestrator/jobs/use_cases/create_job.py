@@ -17,12 +17,12 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from core.jobs.entities import Job, Stage, IdempotencyRecord, AuditEvent
-from core.jobs.exceptions import (
+from build_stream.core.jobs.entities import Job, Stage, IdempotencyRecord, AuditEvent
+from build_stream.core.jobs.exceptions import (
     JobAlreadyExistsError,
     IdempotencyConflictError,
 )
-from core.jobs.repositories import (
+from build_stream.core.jobs.repositories import (
     JobRepository,
     StageRepository,
     IdempotencyRepository,
@@ -30,8 +30,8 @@ from core.jobs.repositories import (
     JobIdGenerator,
     UUIDGenerator,
 )
-from core.jobs.services import FingerprintService
-from core.jobs.value_objects import JobId, StageName, StageType, RequestFingerprint
+from build_stream.core.jobs.services import FingerprintService
+from build_stream.core.jobs.value_objects import JobId, StageName, StageType, RequestFingerprint
 
 from ..commands import CreateJobCommand
 from ..dtos import JobResponse

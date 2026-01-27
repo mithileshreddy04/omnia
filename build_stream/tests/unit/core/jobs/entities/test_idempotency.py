@@ -18,8 +18,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from core.jobs.entities.idempotency import IdempotencyRecord
-from core.jobs.value_objects import ClientId, IdempotencyKey, JobId, RequestFingerprint
+from build_stream.core.jobs.entities.idempotency import IdempotencyRecord
+from build_stream.core.jobs.value_objects import ClientId, IdempotencyKey, JobId, RequestFingerprint
 
 
 class TestIdempotencyRecord:

@@ -17,7 +17,7 @@
 import pytest
 from datetime import datetime, timezone
 
-from core.jobs.value_objects import JobId, ClientId, CorrelationId
+from build_stream.core.jobs.value_objects import JobId, ClientId, CorrelationId
 
 
 @pytest.fixture

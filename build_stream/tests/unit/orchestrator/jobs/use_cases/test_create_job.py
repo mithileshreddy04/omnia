@@ -16,8 +16,8 @@
 
 import pytest
 
-from core.jobs.exceptions import JobAlreadyExistsError, IdempotencyConflictError
-from core.jobs.value_objects import (
+from build_stream.core.jobs.exceptions import JobAlreadyExistsError, IdempotencyConflictError
+from build_stream.core.jobs.value_objects import (
     JobId,
     ClientId,
     CorrelationId,
@@ -26,8 +26,8 @@ from core.jobs.value_objects import (
     StageState,
     StageType,
 )
-from orchestrator.jobs.commands import CreateJobCommand
-from orchestrator.jobs.use_cases import CreateJobUseCase
+from build_stream.orchestrator.jobs.commands import CreateJobCommand
+from build_stream.orchestrator.jobs.use_cases import CreateJobUseCase
 
 
 class _DeterministicJobIdGenerator:

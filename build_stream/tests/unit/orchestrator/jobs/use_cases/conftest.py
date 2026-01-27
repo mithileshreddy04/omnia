@@ -19,9 +19,9 @@ from typing import Optional, List, Dict
 
 import pytest
 
-from core.jobs.entities import Job, Stage, IdempotencyRecord, AuditEvent
-from core.jobs.value_objects import JobId, IdempotencyKey, StageName
-from core.jobs.repositories import JobIdGenerator, UUIDGenerator
+from build_stream.core.jobs.entities import Job, Stage, IdempotencyRecord, AuditEvent
+from build_stream.core.jobs.value_objects import JobId, IdempotencyKey, StageName
+from build_stream.core.jobs.repositories import JobIdGenerator, UUIDGenerator
 
 
 class FakeJobRepository:
@@ -162,6 +162,12 @@ def audit_repo():
 @pytest.fixture
 def job_id_generator():
     """Provide fake JobId generator."""
+    return FakeJobIdGenerator()
+
+
+@pytest.fixture
+def _job_id_generator():
+    """Provide fake JobId generator (alias for job_id_generator)."""
     return FakeJobIdGenerator()
 
 
