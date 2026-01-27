@@ -25,7 +25,6 @@ from core.jobs.exceptions import JobDomainError
 from core.jobs.repositories import JobIdGenerator, UUIDGenerator
 from core.jobs.value_objects import JobId
 
-# TODO: Remove this class once uuid7 is available in the standard library
 class UUIDv7Generator(JobIdGenerator):
     """Temporary UUID v7 generator implementation.
 
