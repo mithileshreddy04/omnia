@@ -12,16 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Infrastructure layer for JobId generation.
+
+This module provides UUID v7 generation for JobId creation.
+TODO: Replace with uuid7 library when available in standard library.
+"""
+
 import time
 import uuid
 
 from core.jobs.exceptions import JobDomainError
-from core.jobs.repositories import JobIdGenerator
+from core.jobs.repositories import JobIdGenerator, UUIDGenerator
 from core.jobs.value_objects import JobId
 
-#TODO: Remove this class once uuid7 is available in the standard library
+# TODO: Remove this class once uuid7 is available in the standard library
 class UUIDv7Generator(JobIdGenerator):
+    """Temporary UUID v7 generator implementation.
+
+    This is a fallback implementation until uuid7 is available
+    in the Python standard library. Generates time-ordered UUIDs
+    compatible with UUID v7 specification.
+    """
+
     def generate(self) -> JobId:
+        """Generate a new UUID v7 JobId.
+
+        Returns:
+            JobId: A new UUID v7 identifier.
+
+        Raises:
+            JobDomainError: If JobId generation fails.
+        """
         try:
             return JobId(str(self._uuid7()))
         except ValueError:
@@ -30,16 +51,37 @@ class UUIDv7Generator(JobIdGenerator):
             raise JobDomainError(f"Failed to generate JobId: {exc}") from exc
 
     def _uuid7(self) -> uuid.UUID:
+        """Generate a UUID v7 using timestamp and random bytes.
+
+        Returns:
+            uuid.UUID: A UUID v7 object.
+        """
         timestamp_ms = int(time.time() * 1000)
         timestamp_bytes = timestamp_ms.to_bytes(6, byteorder='big')
-        
+
         random_bytes = uuid.uuid4().bytes
-        
+
         uuid7_bytes = bytearray(16)
         uuid7_bytes[:6] = timestamp_bytes
         uuid7_bytes[6:] = random_bytes[6:]
-        
+
         uuid7_bytes[6] = (0x07 << 4) | (uuid7_bytes[6] & 0x0f)
         uuid7_bytes[8] = 0x80 | (uuid7_bytes[8] & 0x3f)
-        
+
         return uuid.UUID(bytes=bytes(uuid7_bytes))
+
+
+class UUIDv4Generator(UUIDGenerator):
+    """UUID v4 generator for general purpose use.
+
+    Generates random UUID v4 identifiers that can be used for events,
+    correlation IDs, or any other purpose requiring a unique identifier.
+    """
+
+    def generate(self) -> uuid.UUID:
+        """Generate a new UUID v4.
+
+        Returns:
+            uuid.UUID: A new UUID v4 object.
+        """
+        return uuid.uuid4()

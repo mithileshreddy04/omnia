@@ -28,6 +28,7 @@ from core.jobs.repositories import (
     IdempotencyRepository,
     AuditEventRepository,
     JobIdGenerator,
+    UUIDGenerator,
 )
 from core.jobs.services import FingerprintService
 from core.jobs.value_objects import JobId, StageName, StageType, RequestFingerprint
@@ -38,20 +39,20 @@ from ..dtos import JobResponse
 
 class CreateJobUseCase:
     """Use case for creating a new job with idempotency support.
-    
+
     This use case orchestrates job creation with the following guarantees:
     - Idempotency: Same idempotency key returns same result
     - Atomicity: All-or-nothing persistence (job + stages + idempotency record)
     - Audit trail: Emits JOB_CREATED event
     - Initial stages: Creates all 5 stages in PENDING state
-    
+
     Attributes:
         job_repo: Job repository port.
         stage_repo: Stage repository port.
         idempotency_repo: Idempotency repository port.
         audit_repo: Audit event repository port.
     """
-    
+
     def __init__(
         self,
         job_repo: JobRepository,
@@ -59,31 +60,34 @@ class CreateJobUseCase:
         idempotency_repo: IdempotencyRepository,
         audit_repo: AuditEventRepository,
         job_id_generator: JobIdGenerator,
+        uuid_generator: UUIDGenerator,
     ) -> None:
         """Initialize use case with repository dependencies.
-        
+
         Args:
             job_repo: Job repository implementation.
             stage_repo: Stage repository implementation.
             idempotency_repo: Idempotency repository implementation.
             audit_repo: Audit event repository implementation.
             job_id_generator: Job identifier generator to use.
+            uuid_generator: UUID generator for events and other identifiers.
         """
         self._job_repo = job_repo
         self._stage_repo = stage_repo
         self._idempotency_repo = idempotency_repo
         self._audit_repo = audit_repo
         self._job_id_generator = job_id_generator
-    
+        self._uuid_generator = uuid_generator
+
     def execute(self, command: CreateJobCommand) -> JobResponse:
         """Execute job creation with idempotency.
 
         Args:
             command: CreateJob command with job details.
-            
+
         Returns:
             JobResponse DTO with created job details.
-            
+
         Raises:
             JobAlreadyExistsError: If job_id already exists.
             IdempotencyConflictError: If idempotency key exists with different fingerprint.
@@ -192,7 +196,7 @@ class CreateJobUseCase:
     def _now_utc(self) -> datetime:
         """Return current UTC timestamp."""
         return datetime.now(timezone.utc)
-    
+
     def _compute_fingerprint(self, command: CreateJobCommand) -> RequestFingerprint:
         """Compute request fingerprint for idempotency.
         Fingerprint includes only request payload, not auth-derived fields."""
@@ -201,10 +205,10 @@ class CreateJobUseCase:
             "catalog_digest": command.catalog_digest,
         }
         return FingerprintService.compute(request_body)
-    
+
     def _create_initial_stages(self, job_id: JobId) -> List[Stage]:
         """Create initial stages for the job.
-        
+
         Creates all 9 stages in PENDING state:
         - PARSE_CATALOG
         - GENERATE_INPUT_FILES
@@ -215,7 +219,7 @@ class CreateJobUseCase:
         - VALIDATE_IMAGE
         - VALIDATE_IMAGE_ON_TEST
         - PROMOTE
-            
+
         Returns:
             List of Stage entities in PENDING state.
         """
@@ -226,14 +230,13 @@ class CreateJobUseCase:
                 stage_name=StageName(stage_type.value),
             )
             stages.append(stage)
-        
+
         return stages
 
     def _generate_event_id(self) -> str:
-        """Generate unique event ID.
+        """Generate event ID for audit events.
         
         Returns:
-            UUID v7 string for event identifier.
+            UUID v4 string for event identifier.
         """
-        import uuid
-        return str(uuid.uuid4())
+        return str(self._uuid_generator.generate())

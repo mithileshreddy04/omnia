@@ -15,16 +15,15 @@
 """Job response DTO."""
 
 from dataclasses import dataclass
-from datetime import datetime
 
 
 @dataclass(frozen=True)
 class JobResponse:
     """Response DTO for job operations.
-    
+
     Immutable data transfer object for returning job information
     to the API layer. All timestamps are ISO 8601 formatted strings.
-    
+
     Attributes:
         job_id: Unique job identifier.
         client_id: Client who owns this job.
@@ -36,7 +35,7 @@ class JobResponse:
         tombstoned: Soft delete flag.
         is_new: True if job was newly created, False if retrieved from idempotency.
     """
-    
+
     job_id: str
     client_id: str
     catalog_digest: str
@@ -46,15 +45,15 @@ class JobResponse:
     version: int
     tombstoned: bool
     is_new: bool = True
-    
+
     @staticmethod
     def from_entity(job, is_new: bool = True) -> "JobResponse":
         """Create response DTO from Job entity.
-        
+
         Args:
             job: Job domain entity.
             is_new: True if job was newly created, False if retrieved from idempotency.
-            
+
         Returns:
             JobResponse DTO with serialized values.
         """

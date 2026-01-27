@@ -25,10 +25,10 @@ from ..value_objects import ClientId, JobId, JobState
 @dataclass
 class Job:
     """Job aggregate root.
-    
+
     Represents a build workflow execution with lifecycle management,
     state tracking, and optimistic locking.
-    
+
     Attributes:
         job_id: Unique job identifier.
         client_id: Client who owns this job.
@@ -39,7 +39,7 @@ class Job:
         version: Optimistic locking version.
         tombstoned: Soft delete flag.
     """
-    
+
     job_id: JobId
     client_id: ClientId
     catalog_digest: str
@@ -54,18 +54,18 @@ class Job:
             self.created_at = datetime.now(timezone.utc)
         if self.updated_at is None:
             self.updated_at = self.created_at
-    
+
     def _validate_transition(
-        self, 
-        allowed_states: set[JobState], 
+        self,
+        allowed_states: set[JobState],
         target_state: JobState
     ) -> None:
         """Validate state transition is allowed.
-        
+
         Args:
             allowed_states: States from which transition is valid.
             target_state: Desired target state.
-            
+
         Raises:
             TerminalStateViolationError: If in terminal state.
             InvalidStateTransitionError: If transition invalid.
@@ -76,7 +76,7 @@ class Job:
                 entity_id=str(self.job_id),
                 state=self.job_state.value
             )
-        
+
         if self.job_state not in allowed_states:
             raise InvalidStateTransitionError(
                 entity_type="Job",
@@ -84,15 +84,15 @@ class Job:
                 from_state=self.job_state.value,
                 to_state=target_state.value
             )
-    
+
     def _update_metadata(self) -> None:
         """Update timestamp and version after state change."""
         self.updated_at = datetime.now(timezone.utc)
         self.version += 1
-    
+
     def start(self) -> None:
         """Transition job from CREATED to IN_PROGRESS.
-        
+
         Raises:
             InvalidStateTransitionError: If not in CREATED state.
             TerminalStateViolationError: If in terminal state.
@@ -100,10 +100,10 @@ class Job:
         self._validate_transition({JobState.CREATED}, JobState.IN_PROGRESS)
         self.job_state = JobState.IN_PROGRESS
         self._update_metadata()
-    
+
     def complete(self) -> None:
         """Transition job to COMPLETED state.
-        
+
         Raises:
             InvalidStateTransitionError: If not in IN_PROGRESS state.
             TerminalStateViolationError: If already in terminal state.
@@ -111,10 +111,10 @@ class Job:
         self._validate_transition({JobState.IN_PROGRESS}, JobState.COMPLETED)
         self.job_state = JobState.COMPLETED
         self._update_metadata()
-    
+
     def fail(self) -> None:
         """Transition job to FAILED state.
-        
+
         Raises:
             InvalidStateTransitionError: If not in IN_PROGRESS state.
             TerminalStateViolationError: If already in terminal state.
@@ -122,43 +122,43 @@ class Job:
         self._validate_transition({JobState.IN_PROGRESS}, JobState.FAILED)
         self.job_state = JobState.FAILED
         self._update_metadata()
-    
+
     def cancel(self) -> None:
         """Transition job to CANCELLED state.
-        
+
         Can be called from CREATED or IN_PROGRESS states.
-        
+
         Raises:
             InvalidStateTransitionError: If not in valid state for cancellation.
             TerminalStateViolationError: If already in terminal state.
         """
         self._validate_transition(
-            {JobState.CREATED, JobState.IN_PROGRESS}, 
+            {JobState.CREATED, JobState.IN_PROGRESS},
             JobState.CANCELLED
         )
         self.job_state = JobState.CANCELLED
         self._update_metadata()
-    
+
     def tombstone(self) -> None:
         """Mark job as tombstoned (soft delete).
-        
+
         Tombstoned jobs cannot be modified but remain queryable.
         """
         self.tombstoned = True
         self._update_metadata()
-    
+
     def is_completed(self) -> bool:
         """Check if job is in COMPLETED state."""
         return self.job_state == JobState.COMPLETED
-    
+
     def is_failed(self) -> bool:
         """Check if job is in FAILED state."""
         return self.job_state == JobState.FAILED
-    
+
     def is_cancelled(self) -> bool:
         """Check if job is in CANCELLED state."""
         return self.job_state == JobState.CANCELLED
-    
+
     def is_in_progress(self) -> bool:
         """Check if job is in IN_PROGRESS state."""
         return self.job_state == JobState.IN_PROGRESS

@@ -50,7 +50,7 @@ class TestCreateJobUseCase:
     """Tests for CreateJobUseCase."""
 
     def test_create_job_success(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """Job should be created with all initial stages."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -60,6 +60,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         command = CreateJobCommand(
@@ -79,7 +80,7 @@ class TestCreateJobUseCase:
         assert response.tombstoned is False
 
     def test_create_job_persists_job(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """Job should be persisted to repository."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -89,6 +90,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         command = CreateJobCommand(
@@ -107,7 +109,7 @@ class TestCreateJobUseCase:
         assert saved_job.job_state == JobState.CREATED
 
     def test_create_job_creates_all_stages(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """All 9 initial stages should be created in PENDING state."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -117,6 +119,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         command = CreateJobCommand(
@@ -142,7 +145,7 @@ class TestCreateJobUseCase:
             assert stage.job_id == job_id
 
     def test_create_job_saves_idempotency_record(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """Idempotency record should be saved."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -152,6 +155,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         command = CreateJobCommand(
@@ -170,7 +174,7 @@ class TestCreateJobUseCase:
         assert record.job_id == JobId(response.job_id)
 
     def test_create_job_emits_audit_event(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """JOB_CREATED audit event should be emitted."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -180,6 +184,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         command = CreateJobCommand(
@@ -200,7 +205,7 @@ class TestCreateJobUseCase:
         assert events[0].client_id == command.client_id
 
     def test_idempotent_retry_returns_existing_job(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """Duplicate idempotency key with same fingerprint returns existing job."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -210,6 +215,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         command = CreateJobCommand(
@@ -232,7 +238,7 @@ class TestCreateJobUseCase:
         assert len(events) == 1
 
     def test_idempotency_conflict_raises_error(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """Same idempotency key with different fingerprint raises conflict."""
         first_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -245,6 +251,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=generator,
+            uuid_generator=uuid_generator,
         )
         
         first_command = CreateJobCommand(
@@ -271,7 +278,7 @@ class TestCreateJobUseCase:
         assert exc_info.value.correlation_id == str(second_command.correlation_id)
 
     def test_job_already_exists_raises_error(
-        self, job_repo, stage_repo, idempotency_repo, audit_repo
+        self, job_repo, stage_repo, idempotency_repo, audit_repo, job_id_generator, uuid_generator
     ):
         """Creating job with existing job_id raises error."""
         generated_job_id = JobId("018f3c4c-6a2e-7b2a-9c2a-3d8d2c4b9a11")
@@ -281,6 +288,7 @@ class TestCreateJobUseCase:
             idempotency_repo,
             audit_repo,
             job_id_generator=_DeterministicJobIdGenerator(generated_job_id),
+            uuid_generator=uuid_generator,
         )
         
         first_command = CreateJobCommand(

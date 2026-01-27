@@ -26,17 +26,17 @@ from core.jobs.value_objects import (
 @dataclass(frozen=True)
 class CreateJobCommand:
     """Command to create a new job.
-    
+
     Immutable command object representing the intent to create a job.
     All validation is performed in the use case layer.
-    
+
     Attributes:
         client_id: Client who owns this job.
         catalog_digest: SHA-256 digest of catalog used.
         correlation_id: Request correlation identifier for tracing.
         idempotency_key: Client-supplied key for retry deduplication.
     """
-    
+
     client_id: ClientId
     catalog_digest: str
     correlation_id: CorrelationId

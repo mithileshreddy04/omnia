@@ -22,7 +22,7 @@ class JobDomainError(Exception):
 
     def __init__(self, message: str, correlation_id: Optional[str] = None) -> None:
         """Initialize domain error.
-        
+
         Args:
             message: Human-readable error description.
             correlation_id: Optional correlation ID for tracing.
@@ -37,7 +37,7 @@ class JobNotFoundError(JobDomainError):
 
     def __init__(self, job_id: str, correlation_id: Optional[str] = None) -> None:
         """Initialize job not found error.
-        
+
         Args:
             job_id: The job ID that was not found.
             correlation_id: Optional correlation ID for tracing.
@@ -54,7 +54,7 @@ class JobAlreadyExistsError(JobDomainError):
 
     def __init__(self, job_id: str, correlation_id: Optional[str] = None) -> None:
         """Initialize job already exists error.
-        
+
         Args:
             job_id: The job ID that already exists.
             correlation_id: Optional correlation ID for tracing.
@@ -78,7 +78,7 @@ class InvalidStateTransitionError(JobDomainError):
         correlation_id: Optional[str] = None
     ) -> None:
         """Initialize invalid state transition error.
-        
+
         Args:
             entity_type: Type of entity (Job or Stage).
             entity_id: Identifier of the entity.
@@ -108,7 +108,7 @@ class TerminalStateViolationError(JobDomainError):
         correlation_id: Optional[str] = None
     ) -> None:
         """Initialize terminal state violation error.
-        
+
         Args:
             entity_type: Type of entity (Job or Stage).
             entity_id: Identifier of the entity.
@@ -136,7 +136,7 @@ class OptimisticLockError(JobDomainError):
         correlation_id: Optional[str] = None
     ) -> None:
         """Initialize optimistic lock error.
-        
+
         Args:
             entity_type: Type of entity (Job or Stage).
             entity_id: Identifier of the entity.
@@ -165,7 +165,7 @@ class IdempotencyConflictError(JobDomainError):
         correlation_id: Optional[str] = None
     ) -> None:
         """Initialize idempotency conflict error.
-        
+
         Args:
             idempotency_key: The conflicting idempotency key.
             existing_job_id: Job ID associated with the key.
@@ -190,7 +190,7 @@ class StageNotFoundError(JobDomainError):
         correlation_id: Optional[str] = None
     ) -> None:
         """Initialize stage not found error.
-        
+
         Args:
             job_id: The job ID.
             stage_name: The stage name that was not found.

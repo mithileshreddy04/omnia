@@ -16,9 +16,11 @@
 
 from typing import Optional, List, Dict
 import pytest
+import uuid
 
 from core.jobs.entities import Job, Stage, IdempotencyRecord, AuditEvent
 from core.jobs.value_objects import JobId, IdempotencyKey, StageName
+from core.jobs.repositories import JobIdGenerator, UUIDGenerator
 
 
 class FakeJobRepository:
@@ -95,6 +97,31 @@ class FakeAuditEventRepository:
         ]
 
 
+class FakeJobIdGenerator(JobIdGenerator):
+    """Fake JobId generator for testing."""
+    
+    def __init__(self):
+        self._counter = 1
+    
+    def generate(self) -> JobId:
+        job_id = f"018e1234-5678-7abc-9def-123456789{self._counter:03d}"
+        self._counter += 1
+        return JobId(job_id)
+
+
+class FakeUUIDGenerator(UUIDGenerator):
+    """Fake UUID generator for testing."""
+    
+    def __init__(self):
+        self._counter = 1
+    
+    def generate(self) -> uuid.UUID:
+        # Generate predictable UUIDs for testing
+        uuid_str = f"123e4567-e89b-12d3-a456-426614174{self._counter:03d}"
+        self._counter += 1
+        return uuid.UUID(uuid_str)
+
+
 @pytest.fixture
 def job_repo():
     """Provide fake job repository."""
@@ -117,3 +144,15 @@ def idempotency_repo():
 def audit_repo():
     """Provide fake audit event repository."""
     return FakeAuditEventRepository()
+
+
+@pytest.fixture
+def job_id_generator():
+    """Provide fake JobId generator."""
+    return FakeJobIdGenerator()
+
+
+@pytest.fixture
+def uuid_generator():
+    """Provide fake UUID generator."""
+    return FakeUUIDGenerator()

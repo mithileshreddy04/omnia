@@ -23,26 +23,26 @@ from .value_objects import RequestFingerprint
 
 class FingerprintService:
     """Domain service for computing request fingerprints.
-    
+
     Computes deterministic SHA-256 hash of request payload for idempotency.
     """
-    
+
     @staticmethod
     def compute(request_body: Dict[str, Any]) -> RequestFingerprint:
         """Compute SHA-256 fingerprint of request payload.
-        
+
         Creates a deterministic hash by:
         1. Sorting keys alphabetically
         2. JSON serializing with no whitespace
         3. UTF-8 encoding
         4. SHA-256 hashing
-        
+
         Args:
             request_body: Dictionary of request fields.
-            
+
         Returns:
             RequestFingerprint value object.
-            
+
         Example:
             >>> body = {"job_id": "123", "client_id": "abc"}
             >>> fp = FingerprintService.compute(body)

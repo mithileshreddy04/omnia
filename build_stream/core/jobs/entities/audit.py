@@ -23,9 +23,9 @@ from ..value_objects import ClientId, CorrelationId, JobId
 @dataclass(frozen=True)
 class AuditEvent:
     """Immutable audit event record.
-    
+
     Captures significant domain events for audit trail and compliance.
-    
+
     Attributes:
         event_id: Unique event identifier.
         job_id: Associated job identifier.
@@ -35,7 +35,7 @@ class AuditEvent:
         timestamp: Event occurrence timestamp.
         details: Additional event-specific details.
     """
-    
+
     event_id: str
     job_id: JobId
     event_type: str

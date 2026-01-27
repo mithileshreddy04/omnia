@@ -26,21 +26,21 @@ from typing import ClassVar
 @dataclass(frozen=True)
 class JobId:
     """UUID v7 identifier for a job.
-    
+
     Attributes:
         value: String representation of UUID v7.
-        
+
     Raises:
         ValueError: If value does not match UUID v7 pattern or exceeds length.
     """
-    
+
     value: str
-    
+
     UUID_V7_PATTERN: ClassVar[str] = (
         r'^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
     )
     MAX_LENGTH: ClassVar[int] = 36  # UUID v7 standard length
-    
+
     def __post_init__(self) -> None:
         """Validate UUID v7 format and length."""
         if len(self.value) > self.MAX_LENGTH:
@@ -50,7 +50,7 @@ class JobId:
             )
         if not re.match(self.UUID_V7_PATTERN, self.value.lower()):
             raise ValueError(f"Invalid UUID v7 format: {self.value}")
-    
+
     def __str__(self) -> str:
         """Return string representation."""
         return self.value
@@ -59,21 +59,21 @@ class JobId:
 @dataclass(frozen=True)
 class CorrelationId:
     """UUID v7 identifier for request tracing.
-    
+
     Attributes:
         value: String representation of UUID v7.
-        
+
     Raises:
         ValueError: If value does not match UUID v7 pattern or exceeds length.
     """
-    
+
     value: str
-    
+
     UUID_V7_PATTERN: ClassVar[str] = (
         r'^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
     )
     MAX_LENGTH: ClassVar[int] = 36  # UUID v7 standard length
-    
+
     def __post_init__(self) -> None:
         """Validate UUID v7 format and length."""
         if len(self.value) > self.MAX_LENGTH:
@@ -83,7 +83,7 @@ class CorrelationId:
             )
         if not re.match(self.UUID_V7_PATTERN, self.value.lower()):
             raise ValueError(f"Invalid UUID v7 format: {self.value}")
-    
+
     def __str__(self) -> str:
         """Return string representation."""
         return self.value
@@ -91,11 +91,11 @@ class CorrelationId:
 
 class StageType(str, Enum):
     """Canonical stage types for BuildStreaM workflow.
-    
+
     All valid stage identifiers in the closed set. Used by StageName VO
     for validation and by domain logic to avoid raw string comparisons.
     """
-    
+
     PARSE_CATALOG = "parse-catalog"
     GENERATE_INPUT_FILES = "generate-input-files"
     CREATE_LOCAL_REPOSITORY = "create-local-repository"
@@ -110,18 +110,18 @@ class StageType(str, Enum):
 @dataclass(frozen=True)
 class StageName:
     """Canonical stage identifier.
-    
+
     Attributes:
         value: Stage name from canonical set.
-        
+
     Raises:
         ValueError: If value is not in canonical stages set or exceeds length.
     """
-    
+
     value: str
-    
+
     MAX_LENGTH: ClassVar[int] = 30
-    
+
     def __post_init__(self) -> None:
         """Validate stage name is in canonical set and length."""
         if len(self.value) > self.MAX_LENGTH:
@@ -138,8 +138,13 @@ class StageName:
             ) from exc
 
     def as_enum(self) -> StageType:
+        """Convert stage name to StageType enum.
+        
+        Returns:
+            StageType: The corresponding enum value.
+        """
         return StageType(self.value)
-    
+
     def __str__(self) -> str:
         """Return string representation."""
         return self.value
@@ -148,19 +153,19 @@ class StageName:
 @dataclass(frozen=True)
 class IdempotencyKey:
     """Client-provided deduplication token.
-    
+
     Attributes:
         value: Idempotency key string (1-255 characters).
-        
+
     Raises:
         ValueError: If value length is invalid.
     """
-    
+
     value: str
-    
+
     MIN_LENGTH: ClassVar[int] = 1
     MAX_LENGTH: ClassVar[int] = 255
-    
+
     def __post_init__(self) -> None:
         """Validate key length."""
         length = len(self.value)
@@ -169,7 +174,7 @@ class IdempotencyKey:
                 f"Idempotency key length must be between {self.MIN_LENGTH} "
                 f"and {self.MAX_LENGTH} characters, got {length}"
             )
-    
+
     def __str__(self) -> str:
         """Return string representation."""
         return self.value
@@ -178,19 +183,19 @@ class IdempotencyKey:
 @dataclass(frozen=True)
 class RequestFingerprint:
     """SHA-256 hash of normalized request payload.
-    
+
     Attributes:
         value: 64-character hex string (SHA-256 digest).
-        
+
     Raises:
         ValueError: If value does not match SHA-256 pattern or exceeds length.
     """
-    
+
     value: str
-    
+
     SHA256_PATTERN: ClassVar[str] = r'^[0-9a-f]{64}$'
     MAX_LENGTH: ClassVar[int] = 64  # SHA-256 hex digest length
-    
+
     def __post_init__(self) -> None:
         """Validate SHA-256 format and length."""
         if len(self.value) > self.MAX_LENGTH:
@@ -203,7 +208,7 @@ class RequestFingerprint:
                 f"Invalid SHA-256 format: {self.value}. "
                 f"Expected 64 hexadecimal characters."
             )
-    
+
     def __str__(self) -> str:
         """Return string representation."""
         return self.value
@@ -212,18 +217,18 @@ class RequestFingerprint:
 @dataclass(frozen=True)
 class ClientId:
     """Client identity from authentication.
-    
+
     Attributes:
         value: Client identifier string.
-        
+
     Raises:
         ValueError: If value is empty or exceeds length.
     """
-    
+
     value: str
-    
+
     MAX_LENGTH: ClassVar[int] = 128  # Reasonable client ID length limit
-    
+
     def __post_init__(self) -> None:
         """Validate client ID is not empty and within length limit."""
         if len(self.value) > self.MAX_LENGTH:
@@ -233,7 +238,7 @@ class ClientId:
             )
         if not self.value or not self.value.strip():
             raise ValueError("Client ID cannot be empty")
-    
+
     def __str__(self) -> str:
         """Return string representation."""
         return self.value
@@ -241,19 +246,19 @@ class ClientId:
 
 class JobState(str, Enum):
     """Job lifecycle states.
-    
+
     Terminal states (COMPLETED, FAILED, CANCELLED) cannot transition.
     """
-    
+
     CREATED = "CREATED"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
-    
+
     def is_terminal(self) -> bool:
         """Check if state is terminal (immutable).
-        
+
         Returns:
             True if state is COMPLETED, FAILED, or CANCELLED.
         """
@@ -262,20 +267,20 @@ class JobState(str, Enum):
 
 class StageState(str, Enum):
     """Stage execution states.
-    
+
     Terminal states (COMPLETED, FAILED, SKIPPED, CANCELLED) cannot transition.
     """
-    
+
     PENDING = "PENDING"
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     SKIPPED = "SKIPPED"
     CANCELLED = "CANCELLED"
-    
+
     def is_terminal(self) -> bool:
         """Check if state is terminal (immutable).
-        
+
         Returns:
             True if state is COMPLETED, FAILED, SKIPPED, or CANCELLED.
         """
