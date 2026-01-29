@@ -429,7 +429,7 @@ def integration_test_dir() -> Generator[str, None, None]:
 
 
 @pytest.fixture(scope="module")
-def vault_manager(integration_test_dir: str, auth_password: str) -> Generator[VaultManager, None, None]:
+def vault_manager(integration_test_dir: str, auth_password: str) -> Generator[VaultManager, None, None]:  # noqa: W0621
     """Create and configure vault manager.
 
     Args:
@@ -459,7 +459,7 @@ def project_dir() -> str:
 
 
 @pytest.fixture(scope="module")
-def venv_dir(integration_test_dir: str) -> str:
+def venv_dir(integration_test_dir: str) -> str:  # noqa: W0621
     """Get path to virtual environment directory.
 
     Args:
@@ -473,9 +473,9 @@ def venv_dir(integration_test_dir: str) -> str:
 
 @pytest.fixture(scope="module")
 def server_manager(
-    vault_manager: VaultManager,
-    project_dir: str,
-    venv_dir: str,
+    vault_manager: VaultManager,  # noqa: W0621
+    project_dir: str,  # noqa: W0621
+    venv_dir: str,  # noqa: W0621
 ) -> Generator[ServerManager, None, None]:
     """Create and manage the FastAPI server.
 
@@ -500,7 +500,7 @@ def server_manager(
 
 
 @pytest.fixture(scope="module")
-def base_url(server_manager: ServerManager) -> str:
+def base_url(server_manager: ServerManager) -> str:  # noqa: W0621
     """Get the server base URL.
 
     Args:
@@ -523,7 +523,7 @@ def auth_password() -> str:
 
 
 @pytest.fixture
-def valid_auth_header(auth_password: str) -> Dict[str, str]:
+def valid_auth_header(auth_password: str) -> Dict[str, str]:  # noqa: W0621
     """Create valid Basic Auth header.
 
     Args:
@@ -550,7 +550,7 @@ def invalid_auth_header() -> Dict[str, str]:
 
 
 @pytest.fixture
-def reset_vault(vault_manager: VaultManager, auth_password: str) -> Generator[None, None, None]:
+def reset_vault(vault_manager: VaultManager, auth_password: str) -> Generator[None, None, None]:  # noqa: W0621
     """Reset vault to initial state before and after test.
 
     Args:

@@ -42,51 +42,51 @@ def test_password_pair():
 class TestPasswordHashing:
     """Test suite for password hashing functions."""
 
-    def test_hash_password_returns_argon2_hash(self, test_password):
+    def test_hash_password_returns_argon2_hash(self, test_password):  # noqa: W0621
         """Test that hash_password returns Argon2id hash."""
         hashed = hash_password(test_password)
 
         assert hashed.startswith("$argon2id$")
         assert test_password not in hashed
 
-    def test_hash_password_different_for_same_input(self, test_password):
+    def test_hash_password_different_for_same_input(self, test_password):  # noqa: W0621
         """Test that hashing same password twice produces different hashes."""
         hash1 = hash_password(test_password)
         hash2 = hash_password(test_password)
 
         assert hash1 != hash2
 
-    def test_verify_password_correct_password(self, test_password):
+    def test_verify_password_correct_password(self, test_password):  # noqa: W0621
         """Test verify_password returns True for correct password."""
         hashed = hash_password(test_password)
 
         assert verify_password(test_password, hashed) is True
 
-    def test_verify_password_incorrect_password(self, test_password_pair):
+    def test_verify_password_incorrect_password(self, test_password_pair):  # noqa: W0621
         """Test verify_password returns False for incorrect password."""
         correct_password, wrong_password = test_password_pair
         hashed = hash_password(correct_password)
 
         assert verify_password(wrong_password, hashed) is False
 
-    def test_verify_password_invalid_hash(self, test_password):
+    def test_verify_password_invalid_hash(self, test_password):  # noqa: W0621
         """Test verify_password returns False for invalid hash."""
         assert verify_password(test_password, "invalid_hash") is False
 
-    def test_generated_password_strength(self, test_password):
+    def test_generated_password_strength(self, test_password):  # noqa: W0621
         """Test that generated passwords meet strength requirements."""
         # Password should be at least 16 characters
         assert len(test_password) >= 16
-        
+
         # Should contain at least one lowercase letter
         assert any(c.islower() for c in test_password)
-        
+
         # Should contain at least one uppercase letter
         assert any(c.isupper() for c in test_password)
-        
+
         # Should contain at least one digit
         assert any(c.isdigit() for c in test_password)
-        
+
         # Should contain at least one special character
         special_chars = "!@#$%^&*"
         assert any(c in special_chars for c in test_password)

@@ -22,7 +22,7 @@ import the app directly (it runs the server as a subprocess).
 import base64
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Generator
+from typing import Dict, Generator
 
 import pytest
 
@@ -33,46 +33,46 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # Lazy imports to avoid triggering FastAPI route registration
 # when running E2E tests that don't need these fixtures
-_app = None
-_AuthService = None
-_auth_routes = None
-_MockVaultClient = None
+_APP = None
+_AUTH_SERVICE = None
+_AUTH_ROUTES = None
+_MOCK_VAULT_CLIENT = None
 
 
 def _get_app():
     """Lazy import of FastAPI app."""
-    global _app
-    if _app is None:
-        from main import app
-        _app = app
-    return _app
+    global _APP
+    if _APP is None:
+        from main import app  # noqa: PLC0415
+        _APP = app
+    return _APP
 
 
 def _get_auth_service():
     """Lazy import of AuthService."""
-    global _AuthService
-    if _AuthService is None:
-        from api.auth.service import AuthService
-        _AuthService = AuthService
-    return _AuthService
+    global _AUTH_SERVICE
+    if _AUTH_SERVICE is None:
+        from api.auth.service import AuthService  # noqa: PLC0415
+        _AUTH_SERVICE = AuthService
+    return _AUTH_SERVICE
 
 
 def _get_auth_routes():
-    """Lazy import of auth routes module."""
-    global _auth_routes
-    if _auth_routes is None:
-        from api.auth import routes as auth_routes
-        _auth_routes = auth_routes
-    return _auth_routes
+    """Lazy import of auth routes."""
+    global _AUTH_ROUTES
+    if _AUTH_ROUTES is None:
+        from api.auth import routes as auth_routes  # noqa: PLC0415
+        _AUTH_ROUTES = auth_routes
+    return _AUTH_ROUTES
 
 
 def _get_mock_vault_client():
     """Lazy import of MockVaultClient."""
-    global _MockVaultClient
-    if _MockVaultClient is None:
-        from tests.mocks.mock_vault_client import MockVaultClient
-        _MockVaultClient = MockVaultClient
-    return _MockVaultClient
+    global _MOCK_VAULT_CLIENT
+    if _MOCK_VAULT_CLIENT is None:
+        from tests.mocks.mock_vault_client import MockVaultClient  # noqa: PLC0415
+        _MOCK_VAULT_CLIENT = MockVaultClient
+    return _MOCK_VAULT_CLIENT
 
 
 @pytest.fixture
@@ -124,14 +124,14 @@ def test_client(mock_vault_client) -> Generator:
     Yields:
         TestClient configured for testing.
     """
-    from fastapi.testclient import TestClient
+    from fastapi.testclient import TestClient  # noqa: PLC0415
 
     app = _get_app()
-    AuthService = _get_auth_service()
+    auth_service_class = _get_auth_service()
     auth_routes = _get_auth_routes()
 
-    test_auth_service = AuthService(vault_client=mock_vault_client)
-    original_service = auth_routes._auth_service
+    test_auth_service = auth_service_class(vault_client=mock_vault_client)
+    original_service = auth_routes._auth_service  # noqa: W0212
 
     auth_routes._auth_service = test_auth_service
 
@@ -151,21 +151,21 @@ def test_client_with_existing_client(mock_vault_with_client) -> Generator:
     Yields:
         TestClient configured for testing max client scenarios.
     """
-    from fastapi.testclient import TestClient
+    from fastapi.testclient import TestClient  # noqa: PLC0415
 
     app = _get_app()
-    AuthService = _get_auth_service()
+    auth_service_class = _get_auth_service()
     auth_routes = _get_auth_routes()
 
-    test_auth_service = AuthService(vault_client=mock_vault_with_client)
-    original_service = auth_routes._auth_service
+    test_auth_service = auth_service_class(vault_client=mock_vault_with_client)
+    original_service = auth_routes._auth_service  # noqa: W0212
 
-    auth_routes._auth_service = test_auth_service
+    auth_routes._auth_service = test_auth_service  # noqa: W0212
 
     with TestClient(app) as client:
         yield client
 
-    auth_routes._auth_service = original_service
+    auth_routes._auth_service = original_service  # noqa: W0212
 
 
 @pytest.fixture
@@ -175,9 +175,9 @@ def valid_auth_header() -> Dict[str, str]:
     Returns:
         Dictionary with Authorization header.
     """
-    MockVaultClient = _get_mock_vault_client()
+    mock_vault_client_class = _get_mock_vault_client()
     credentials = base64.b64encode(
-        f"{MockVaultClient.DEFAULT_TEST_USERNAME}:{MockVaultClient.DEFAULT_TEST_PASSWORD}".encode()
+        f"{mock_vault_client_class.DEFAULT_TEST_USERNAME}:{mock_vault_client_class.DEFAULT_TEST_PASSWORD}".encode()
     ).decode()
     return {"Authorization": f"Basic {credentials}"}
 

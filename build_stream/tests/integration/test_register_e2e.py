@@ -45,7 +45,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test successful client registration with valid credentials.
 
@@ -81,7 +81,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with only required fields uses default scopes."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -101,7 +101,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration fails when max clients (1) already registered.
 
@@ -132,7 +132,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         invalid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with invalid Basic Auth credentials fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -150,7 +150,7 @@ class TestRegisterEndpointE2E:
     def test_register_missing_auth_returns_401(
         self,
         base_url: str,
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration without Authorization header fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -165,7 +165,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with invalid client_name format fails validation."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -181,7 +181,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with empty client_name fails validation."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -197,7 +197,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration without client_name field fails validation."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -213,7 +213,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with invalid scope value fails validation."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -232,7 +232,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with client_name exceeding max length fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -248,7 +248,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test that successful response contains all expected fields."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -280,7 +280,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test that client_id follows expected format: bld_<32_hex>."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -305,7 +305,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test that client_secret follows expected format: bld_s_<base64>."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -327,7 +327,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with malformed JSON body fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -343,7 +343,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with wrong content type fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -358,7 +358,7 @@ class TestRegisterEndpointE2E:
     def test_register_malformed_basic_auth_returns_401(
         self,
         base_url: str,
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with malformed Basic Auth header fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -373,7 +373,7 @@ class TestRegisterEndpointE2E:
     def test_register_bearer_auth_returns_401(
         self,
         base_url: str,
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with Bearer auth instead of Basic fails."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -389,7 +389,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with valid special characters in client_name."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -406,7 +406,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with unicode characters in description."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
@@ -425,7 +425,7 @@ class TestRegisterEndpointE2E:
         self,
         base_url: str,
         valid_auth_header: Dict[str, str],
-        reset_vault,
+        reset_vault,  # noqa: W0613
     ):
         """Test registration with all valid scope combinations."""
         with httpx.Client(base_url=base_url, timeout=30.0) as client:
