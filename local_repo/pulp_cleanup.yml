@@ -77,6 +77,8 @@
         cleanup_repos: "{{ repo_list | default([]) }}"
         cleanup_containers: "{{ container_list | default([]) }}"
         cleanup_files: "{{ file_list | default([]) }}"
+        base_path: "{{ base_path | default('/opt/omnia/log/local_repo') }}"
+        repo_store_path: "{{ repo_store_path | default('/opt/omnia') }}"
       register: cleanup_result
 
   post_tasks:

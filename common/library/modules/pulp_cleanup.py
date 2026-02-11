@@ -27,6 +27,7 @@ import os
 import csv
 import glob
 import json
+import shutil
 import subprocess
 from typing import Dict, List, Any, Tuple
 
@@ -399,7 +400,7 @@ def delete_file_from_pulp(name: str, repo_name: str, content_href: str, logger) 
         return False, f"Pulp deletion error: {str(e)}"
 
 
-def cleanup_pip_module(name: str, base_path: str, logger) -> Dict[str, Any]:
+def cleanup_pip_module(name: str, base_path: str, repo_store_path: str, logger) -> Dict[str, Any]:
     """Cleanup a pip module from Pulp Python repository.
     
     Pip modules are stored as: pip_module<package_name>==<version>
@@ -408,6 +409,7 @@ def cleanup_pip_module(name: str, base_path: str, logger) -> Dict[str, Any]:
     result = {"name": name, "type": "pip_module", "status": "Failed", "message": ""}
     messages = []
     pulp_deleted = False
+    content_removed = False
 
     try:
         # Pulp Python repo name format: pip_module<name>
@@ -467,11 +469,17 @@ def cleanup_pip_module(name: str, base_path: str, logger) -> Dict[str, Any]:
                 messages.append("Status files updated")
                 mark_software_partial(affected, base_path, logger, 'pip_module')
 
-        if pulp_deleted:
+        # Clean up uploaded content from filesystem
+        fs_result = cleanup_content_directory(name, 'pip_module', repo_store_path, logger)
+        if fs_result["status"] == "Success":
+            content_removed = True
+            messages.append(fs_result["message"])
+
+        if pulp_deleted or content_removed:
             result["status"] = "Success"
             result["message"] = "; ".join(messages) if messages else "Cleaned up"
         else:
-            result["message"] = f"pip_module '{name}' not found in Pulp"
+            result["message"] = f"pip_module '{name}' not found in Pulp or filesystem"
 
     except Exception as e:
         result["message"] = f"Error: {str(e)}"
@@ -493,7 +501,7 @@ def get_pulp_file_repo_name(name: str, file_type: str) -> str:
     return name
 
 
-def cleanup_file_repository(name: str, file_type: str, base_path: str, logger) -> Dict[str, Any]:
+def cleanup_file_repository(name: str, file_type: str, base_path: str, repo_store_path: str, logger) -> Dict[str, Any]:
     """Cleanup artifact from Pulp File repository.
     
     Handles: tarball, git, manifest, ansible_galaxy_collection
@@ -503,6 +511,7 @@ def cleanup_file_repository(name: str, file_type: str, base_path: str, logger) -
     messages = []
     pulp_deleted = False
     status_removed = False
+    content_removed = False
 
     try:
         # Get the expected Pulp repository name
@@ -559,12 +568,18 @@ def cleanup_file_repository(name: str, file_type: str, base_path: str, logger) -
                 messages.append("Status files updated")
                 mark_software_partial(affected, base_path, logger, file_type)
 
+        # Clean up uploaded content from filesystem
+        fs_result = cleanup_content_directory(name, file_type, repo_store_path, logger)
+        if fs_result["status"] == "Success":
+            content_removed = True
+            messages.append(fs_result["message"])
+
         # Determine overall result
-        if pulp_deleted or status_removed:
+        if pulp_deleted or status_removed or content_removed:
             result["status"] = "Success"
             result["message"] = "; ".join(messages) if messages else "Cleaned up"
         else:
-            result["message"] = f"{file_type} '{name}' not found in Pulp or status files"
+            result["message"] = f"{file_type} '{name}' not found in Pulp, status files, or filesystem"
 
     except Exception as e:
         result["message"] = f"Error: {str(e)}"
@@ -572,7 +587,7 @@ def cleanup_file_repository(name: str, file_type: str, base_path: str, logger) -
     return result
 
 
-def cleanup_file(name: str, base_path: str, logger) -> Dict[str, Any]:
+def cleanup_file(name: str, base_path: str, repo_store_path: str, logger) -> Dict[str, Any]:
     """Cleanup a file artifact.
     
     Routes to appropriate handler:
@@ -583,10 +598,75 @@ def cleanup_file(name: str, base_path: str, logger) -> Dict[str, Any]:
 
     # Handle pip modules separately - they use Python repositories
     if file_type == "pip_module":
-        return cleanup_pip_module(name, base_path, logger)
+        return cleanup_pip_module(name, base_path, repo_store_path, logger)
 
     # All other file types use Pulp File repository
-    return cleanup_file_repository(name, file_type, base_path, logger)
+    return cleanup_file_repository(name, file_type, base_path, repo_store_path, logger)
+
+
+# =============================================================================
+# FILESYSTEM CONTENT CLEANUP
+# =============================================================================
+
+def cleanup_content_directory(content_name: str, content_type: str, repo_store_path: str, logger) -> Dict[str, Any]:
+    """Remove uploaded content directory from the filesystem.
+
+    Builds the content path the same way as download_common.py:
+        <repo_store_path>/offline_repo/cluster/<arch>/rhel/<version>/<content_type>/<content_name>
+
+    This mirrors how remove_from_status_files iterates over ARCH_SUFFIXES to
+    clean status.csv entries.
+
+    Args:
+        content_name: Name of the content item (e.g., 'helm-v3.19.0-amd64')
+        content_type: Directory category (tarball, git, pip_module, manifest,
+                      ansible_galaxy_collection, rpm_file)
+        repo_store_path: Root store path (e.g., '/opt/omnia')
+        logger: Logger instance
+
+    Returns:
+        Dict with name, type, status, and message keys
+    """
+    result = {"name": content_name, "type": f"filesystem_{content_type}",
+              "status": "Failed", "message": ""}
+    removed_dirs = []
+
+    cluster_path = os.path.join(repo_store_path, "offline_repo", "cluster")
+    if not os.path.exists(cluster_path):
+        result["message"] = f"Content store path not found: {cluster_path}"
+        logger.warning(result["message"])
+        return result
+
+    try:
+        for arch in ARCH_SUFFIXES:
+            # Walk version directories (e.g., rhel/10.0)
+            arch_path = os.path.join(cluster_path, arch)
+            if not os.path.isdir(arch_path):
+                continue
+
+            for version_dir in glob.glob(f"{arch_path}/rhel/*/"):
+                content_dir = os.path.join(version_dir, content_type, content_name)
+                if os.path.exists(content_dir):
+                    logger.info(f"Removing content directory: {content_dir}")
+                    if os.path.isdir(content_dir):
+                        shutil.rmtree(content_dir)
+                    else:
+                        os.remove(content_dir)
+                    removed_dirs.append(content_dir)
+
+        if removed_dirs:
+            result["status"] = "Success"
+            result["message"] = f"Removed content: {', '.join(removed_dirs)}"
+        else:
+            result["message"] = (f"No filesystem content found for "
+                                 f"'{content_name}' under {content_type}")
+            logger.info(result["message"])
+
+    except Exception as e:
+        result["message"] = f"Filesystem cleanup error: {str(e)}"
+        logger.error(f"Failed to cleanup content {content_name}: {e}")
+
+    return result
 
 
 # =============================================================================
@@ -868,7 +948,8 @@ def run_module():
             cleanup_repos=dict(type='list', elements='str', default=[]),
             cleanup_containers=dict(type='list', elements='str', default=[]),
             cleanup_files=dict(type='list', elements='str', default=[]),
-            base_path=dict(type='str', default=CLEANUP_BASE_PATH_DEFAULT)
+            base_path=dict(type='str', default=CLEANUP_BASE_PATH_DEFAULT),
+            repo_store_path=dict(type='str', default='/opt/omnia')
         ),
         supports_check_mode=True
     )
@@ -877,6 +958,7 @@ def run_module():
     cleanup_containers = module.params['cleanup_containers']
     cleanup_files = module.params['cleanup_files']
     base_path = module.params['base_path']
+    repo_store_path = module.params['repo_store_path']
 
     # Setup logger - setup_standard_logger expects a directory, creates standard.log inside
     log_dir = os.path.join(base_path, "cleanup")
@@ -915,7 +997,7 @@ def run_module():
 
     # Process files
     for file in cleanup_files:
-        result = cleanup_file(file, base_path, logger)
+        result = cleanup_file(file, base_path, repo_store_path, logger)
         all_results.append(result)
         logger.info(f"File {file}: {result['status']} - {result['message']}")
 
