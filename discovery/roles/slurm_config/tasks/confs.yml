@@ -172,7 +172,7 @@
   ansible.builtin.copy:
     content: "{{ item.ini_lines | join('\n') }}\n"
     dest: "{{ slurm_config_path }}/{{ ctld_list[0] }}/etc/slurm/{{ item.item.key }}.conf"
-    mode: "{{ conf_file_mode }}"
+    mode: "0640"
     owner: "{{ slurm_user }}"
     group: "{{ slurm_user_group }}"
     remote_src: "{{ copy_from_oim }}"
