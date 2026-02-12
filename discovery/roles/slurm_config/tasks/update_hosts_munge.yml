@@ -36,7 +36,6 @@
     - munge_key_changed[name_ip_map[slurmhost_ip]]['changed'] | default(false)
     - restart_slurm_services
   delegate_to: "{{ slurmhost_ip }}"
-  ignore_errors: true
   ignore_unreachable: true
   block:
     - name: Update munge key permissions
@@ -82,3 +81,7 @@
         - name_ip_map[slurmhost_ip] in dbd_list
         - munge_restart_result is defined
         - munge_restart_result is success
+  rescue:
+    - name: Handle munge restart failure
+      ansible.builtin.debug:
+        msg: "Failed task {{ ansible_failed_task.name }} on {{ slurmhost_ip }}"
