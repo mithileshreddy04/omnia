@@ -164,7 +164,7 @@ setup_omnia_core() {
 # It removes the container and performs the necessary cleanup steps.
 cleanup_omnia_core() {
     # Block if critical service containers exist
-    critical_running=$(podman ps --format '{{.Names}}' | grep -E 'pulp|registry|minio-server|postgres|step-ca|hydra|smd|opaal-idp|bss|opaal|cloud-init-server|haproxy|coresmd')
+    critical_running=$(podman ps --format '{{.Names}}' | grep -E '^pulp$|^omnia_auth$|^minio-server$|^registry$|^step-ca$|^postgres$|^hydra$|^opaal-idp$|^smd$|^opaal$|^bss$|^cloud-init-server$|^haproxy$|^coresmd$|^omnia_build_stream$|^omnia_postgres$')
     if [ -n "$critical_running" ]; then
         echo -e "${RED}Failed to intiatiate omnia_core container cleanup. There are other critical service containers still running:${NC}"
         echo "$critical_running"
@@ -272,7 +272,7 @@ cleanup_config(){
 # Otherwise, it prints an error message.
 remove_container() {
     # Block if critical service containers exist
-    critical_running=$(podman ps --format '{{.Names}}' | grep -E 'pulp|registry|minio-server|postgres|step-ca|hydra|smd|opaal-idp|bss|opaal|cloud-init-server|haproxy|coresmd')
+    critical_running=$(podman ps --format '{{.Names}}' | grep -E '^pulp$|^omnia_auth$|^minio-server$|^registry$|^step-ca$|^postgres$|^hydra$|^opaal-idp$|^smd$|^opaal$|^bss$|^cloud-init-server$|^haproxy$|^coresmd$|^omnia_build_stream$|^omnia_postgres$')
     if [ -n "$critical_running" ]; then
         echo -e "${RED}Failed to intiatiate omnia_core container cleanup. There are other critical service containers still running:${NC}"
         echo "$critical_running"
@@ -1083,7 +1083,7 @@ install_omnia_core() {
             # If the user wants to reinstall, call the remove_container function, and then call the setup_omnia_core function
             if [ "$choice" = "2" ]; then
                 # Block if critical service containers exist
-                critical_running=$(podman ps --format '{{.Names}}' | grep -E 'pulp|registry|minio-server|postgres|step-ca|hydra|smd|opaal-idp|bss|opaal|cloud-init-server|haproxy|coresmd')
+                critical_running=$(podman ps --format '{{.Names}}' | grep -E '^pulp$|^omnia_auth$|^minio-server$|^registry$|^step-ca$|^postgres$|^hydra$|^opaal-idp$|^smd$|^opaal$|^bss$|^cloud-init-server$|^haproxy$|^coresmd$|^omnia_build_stream$|^omnia_postgres$')
                 if [ -n "$critical_running" ]; then
                     echo -e "${RED}Failed to intiatiate omnia_core container cleanup. There are other critical service containers still running:${NC}"
                     echo "$critical_running"
