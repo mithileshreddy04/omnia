@@ -30,6 +30,7 @@
     munge_key_changed: "{{ munge_key_copy.results | default([]) | rekey_on_member('item') }}"
   when: munge_key_copy is defined
 
+# TODO: Clean unreachable handling
 - name: Block when munge key changed
   when:
     - munge_key_changed is defined

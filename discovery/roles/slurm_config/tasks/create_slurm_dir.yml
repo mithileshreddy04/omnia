@@ -194,17 +194,7 @@
     group: "{{ root_group }}"
     mode: "{{ common_mode }}"
   when: cmpt_list
-  loop: "{{ cmpt_list | product(['logout_user.sh', 'slurmd.service']) }}"
-
-- name: Create logout_user.sh and slurmd.service in login and login_compiler
-  ansible.builtin.template:
-    src: "{{ item.1 }}.j2"
-    dest: "{{ slurm_config_path }}/{{ item.0 }}/etc/slurm/epilog.d/{{ item.1 }}"
-    owner: "{{ root_user }}"
-    group: "{{ root_group }}"
-    mode: "{{ conf_file_mode }}"
-  when: login_list or compiler_login_list
-  loop: "{{ (login_list + compiler_login_list) | product(['slurmd.service']) }}"
+  loop: "{{ cmpt_list | product(['logout_user.sh']) }}"
 
 - name: Get the slurm NFS path
   ansible.builtin.debug:

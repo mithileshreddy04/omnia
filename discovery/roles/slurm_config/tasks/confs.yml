@@ -197,3 +197,5 @@
     - ctld_list
     - ctld_conf_files is changed
   loop: "{{ ctld_list }}"
+  loop_control:
+    loop_var: ctld
