@@ -1,0 +1,53 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+- name: Rollback Omnia guidance
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    oim_metadata_path: "/opt/omnia/.data/oim_metadata.yml"
+  tasks:
+    - name: Read oim_metadata.yml for backup details
+      ansible.builtin.slurp:
+        src: "{{ oim_metadata_path }}"
+      register: oim_metadata_slurp
+      ignore_errors: true
+
+    - name: Parse oim_metadata.yml
+      ansible.builtin.set_fact:
+        oim_metadata: "{{ oim_metadata_slurp.content | b64decode | from_yaml }}"
+      when: oim_metadata_slurp is defined and oim_metadata_slurp.content is defined
+
+    - name: Derive backup_version from upgrade_backup_dir
+      ansible.builtin.set_fact:
+        backup_version: "{{ (oim_metadata.upgrade_backup_dir | regex_search('version_([^/]+)', '\\1'))
+          | default('previous version', true) }}"
+      when: oim_metadata is defined and oim_metadata.upgrade_backup_dir is defined
+
+    - name: Display rollback guidance
+      ansible.builtin.debug:
+        msg: >-
+          The rollback function restores the Omnia core to the last backup version
+          created during upgrade, including configs and container state.
+
+          To return to the previous Omnia version
+          {{("(version " ~ backup_version[0] ~ ")") if backup_version is defined and backup_version }}
+          captured in the backup,
+          run the rollback from the OIM host:
+            1) If you are inside the Omnia core container, exit the container shell.
+            2) On the OIM host prompt, execute: ./omnia.sh --rollback
+
+    - name: End play
+      ansible.builtin.meta: end_play
