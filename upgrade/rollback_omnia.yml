@@ -36,18 +36,19 @@
           | default('previous version', true) }}"
       when: oim_metadata is defined and oim_metadata.upgrade_backup_dir is defined
 
-    - name: Display rollback guidance
+    - name: Display rollback guidance (green)
       ansible.builtin.debug:
-        msg: >-
-          The rollback function restores the Omnia core to the last backup version
-          created during upgrade, including configs and container state.
-
-          To return to the previous Omnia version
-          {{("(version " ~ backup_version[0] ~ ")") if backup_version is defined and backup_version }}
-          captured in the backup,
-          run the rollback from the OIM host:
-            1) If you are inside the Omnia core container, exit the container shell.
-            2) On the OIM host prompt, execute: ./omnia.sh --rollback
-
+        msg:
+          - "================================="
+          - "       OMNIA ROLLBACK"
+          - "================================="
+          - ""
+          - "[Rollback Actions]"
+          - "1. Purpose: restore Omnia core to the last backup version (includes configs and container state)."
+          - "2. Target version: {{ backup_version | default('previous version from the backup location') }}."
+          - "3. How to run:"
+          - "   - Exit the Omnia core container shell if you are inside it."
+          - "   - From the OIM host prompt, execute: ./omnia.sh --rollback"
+          - "4. Note: ensure the backup location is accessible on the OIM host before running rollback."
     - name: End play
       ansible.builtin.meta: end_play

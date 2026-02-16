@@ -22,7 +22,7 @@
 
       Cluster reprovisioning is required after upgrade to enable new features.
 
-      Review and update new 2.1 input fields before reprovisioning:
+      Review and update new 2.1 input fields present at /opt/omnia/input/project_default/ directory before reprovisioning:
 
         1. local_repo_config.yml
 
@@ -42,11 +42,11 @@
 
             - Populate location to point to your Slurm config bundle (local path or remote URL)
 
-        4. NFS cleanup (if NFS share is used for k8s/slurm)
+      Do NFS cleanup (if NFS share is used for k8s/slurm)
 
-            - Clean stale mounts and ensure the NFS share is accessible before reprovision
+         - Clean stale mounts and ensure the NFS share is accessible before reprovision
 
-            - Remove any leftover cluster state on the NFS share that could conflict with fresh deployment
+         - Remove any leftover cluster state on the NFS share that could conflict with fresh deployment
 
 
       Run the following playbooks in sequence from the Omnia root directory to reprovision the cluster:
