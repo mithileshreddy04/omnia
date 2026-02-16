@@ -61,7 +61,7 @@
 
         3. ansible-playbook discovery/discovery.yml
 
-
+      
       Please follow the omnia documentation for steps in more detail.
 
     {{ '\x1b[0m' }}"
