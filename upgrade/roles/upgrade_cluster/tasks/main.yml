@@ -57,7 +57,7 @@
 
         3. Only if the user is using aarch64 nodes, run the below playbook after build_image_x86_64:
 
-         - ansible-playbook build_image_aarch64/build_image_aarch64.yml
+        ansible-playbook build_image_aarch64/build_image_aarch64.yml
 
         4. ansible-playbook discovery/discovery.yml
 
