@@ -79,7 +79,7 @@ cluster_name: cluster # TODO: direct load vars omnia_config.yml
 slurm_uid: 6001
 slurm_user: slurm
 slurm_user_group: slurm
-restart_slurm_services: "{{ hostvars['localhost']['restart_slurm_services'] }}"
+restart_slurm_services: "{{ hostvars['localhost']['restart_slurm_services'] | default(true) }}"
 slurm_db_username: "{{ hostvars['localhost']['slurm_db_username'] | default('dbuser') }}"
 slurm_db_password: "{{ hostvars['localhost']['slurm_db_password'] }}"
 slurm_db_host: "{{ hostvars['localhost']['slurm_db_host'] | default(false) }}"
