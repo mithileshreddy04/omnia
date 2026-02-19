@@ -84,16 +84,16 @@ def execute_command(cmd_string, logger, type_json=False):
                 logger.error(f"Raw output was: {status['stdout']}")
                 return False
 
-        logger.info(f"Command succeeded: {cmd_string}")
+        logger.info(f"Command succeeded: {safe_cmd_string}")
         return status
     except subprocess.CalledProcessError as e:
-        logger.error(f"Command failed: {cmd_string} - {e}")
+        logger.error(f"Command failed: {safe_cmd_string} - {e}")
         return False
     except subprocess.TimeoutExpired as e:
-        logger.error(f"Command timed out: {cmd_string} - {e}")
+        logger.error(f"Command timed out: {safe_cmd_string} - {e}")
         return False
     except OSError as e:
-        logger.error(f"OS error during command: {cmd_string} - {e}")
+        logger.error(f"OS error during command: {safe_cmd_string} - {e}")
         return False
 
     finally:
