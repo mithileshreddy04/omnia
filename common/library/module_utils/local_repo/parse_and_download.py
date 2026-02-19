@@ -85,7 +85,7 @@ def execute_command(cmd_string, logger, type_json=False):
                 return False
 
         logger.info(f"Command succeeded: {cmd_string}")
-        return True
+        return status
     except subprocess.CalledProcessError as e:
         logger.error(f"Command failed: {cmd_string} - {e}")
         return False
