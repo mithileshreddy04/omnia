@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright © 2025 Dell Inc. or its subsidiaries. All Rights Reserved.
+# Copyright 2025 Dell Inc. or its subsidiaries. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -299,7 +299,18 @@ update_metadata_upgrade_backup_dir() {
     "
 }
 
-
+# Resolve the upgrade guard lock path (container or host shared path)
+get_upgrade_guard_lock_path() {
+    local upgrade_guard_lock_container="/opt/omnia/.data/upgrade_in_progress.lock"
+    local upgrade_guard_lock_host
+    upgrade_guard_lock_host=$(podman exec -u root omnia_core grep '^oim_shared_path:' /opt/omnia/.data/oim_metadata.yml 2>/dev/null | cut -d':' -f2- | tr -d ' \t\n\r')
+    if [ -n "$upgrade_guard_lock_host" ]; then
+        upgrade_guard_lock_host="$upgrade_guard_lock_host/omnia/.data/upgrade_in_progress.lock"
+    else
+        upgrade_guard_lock_host="$upgrade_guard_lock_container"
+    fi
+    echo "$upgrade_guard_lock_host"
+}
 
 check_internal_nfs_export() {
     nfs_server_ip=$1
@@ -399,17 +410,9 @@ cleanup_omnia_core() {
         fetch_config
 
         # Clear upgrade guard lock if present (shared path visible to container and host)
-        local upgrade_guard_lock_container="/opt/omnia/.data/upgrade_in_progress.lock"
-        local upgrade_guard_lock_host
-        upgrade_guard_lock_host=$(podman exec -u root omnia_core grep '^oim_shared_path:' /opt/omnia/.data/oim_metadata.yml 2>/dev/null | cut -d':' -f2- | tr -d ' \t\n\r')
-        if [ -n "$upgrade_guard_lock_host" ]; then
-            upgrade_guard_lock_host="$upgrade_guard_lock_host/omnia/.data/upgrade_in_progress.lock"
-        else
-            upgrade_guard_lock_host="$upgrade_guard_lock_container"
-        fi
-
-        rm -f "$upgrade_guard_lock_host" >/dev/null 2>&1 || true
-        echo "[INFO] [CLEANUP] Cleared upgrade guard lock (if present): $upgrade_guard_lock_host"
+        local upgrade_guard_lock_path=$(get_upgrade_guard_lock_path)
+        rm -f "$upgrade_guard_lock_path" >/dev/null 2>&1 || true
+        echo "[INFO] [CLEANUP] Cleared upgrade guard lock (if present): $upgrade_guard_lock_path"
 
         # Remove the container
         remove_container
@@ -1851,18 +1854,12 @@ upgrade_omnia_core() {
     trap 'rm -f "$lock_file"' EXIT
 
     # Create upgrade guard lock in shared path so other playbooks can block during upgrade
-    local upgrade_guard_lock_container="/opt/omnia/.data/upgrade_in_progress.lock"
-    local upgrade_guard_lock_host
-    upgrade_guard_lock_host=$(podman exec -u root omnia_core grep '^oim_shared_path:' /opt/omnia/.data/oim_metadata.yml 2>/dev/null | cut -d':' -f2- | tr -d ' \t\n\r')
-    if [ -n "$upgrade_guard_lock_host" ]; then
-        upgrade_guard_lock_host="$upgrade_guard_lock_host/omnia/.data/upgrade_in_progress.lock"
-    else
-        upgrade_guard_lock_host="$upgrade_guard_lock_container"
-    fi
+    local upgrade_guard_lock_path
+    upgrade_guard_lock_path=$(get_upgrade_guard_lock_path)
 
-    mkdir -p "$(dirname "$upgrade_guard_lock_host")" 2>/dev/null || true
-    echo "Upgrade in progress. Complete upgrade_omnia.yml or rollback to clear." > "$upgrade_guard_lock_host" || {
-        echo -e "${RED}ERROR: Failed to create upgrade guard lock: $upgrade_guard_lock_host${NC}"
+    mkdir -p "$(dirname "$upgrade_guard_lock_path")" 2>/dev/null || true
+    echo "Upgrade in progress. Complete upgrade_omnia.yml or rollback to clear." > "$upgrade_guard_lock_path" || {
+        echo -e "${RED}ERROR: Failed to create upgrade guard lock: $upgrade_guard_lock_path${NC}"
         exit 1
     }
 
@@ -2319,17 +2316,11 @@ rollback_omnia_core() {
     echo "[INFO] Rollback lock file removed before starting container session"
 
     # Clear upgrade guard lock if it exists (shared path visible to container and host)
-    local upgrade_guard_lock_container="/opt/omnia/.data/upgrade_in_progress.lock"
-    local upgrade_guard_lock_host
-    upgrade_guard_lock_host=$(podman exec -u root omnia_core grep '^oim_shared_path:' /opt/omnia/.data/oim_metadata.yml 2>/dev/null | cut -d':' -f2- | tr -d ' \t\n\r')
-    if [ -n "$upgrade_guard_lock_host" ]; then
-        upgrade_guard_lock_host="$upgrade_guard_lock_host/omnia/.data/upgrade_in_progress.lock"
-    else
-        upgrade_guard_lock_host="$upgrade_guard_lock_container"
-    fi
+    local upgrade_guard_lock_path
+    upgrade_guard_lock_path=$(get_upgrade_guard_lock_path)
 
-    rm -f "$upgrade_guard_lock_host" >/dev/null 2>&1 || true
-    echo "[INFO] [ROLLBACK] Cleared upgrade guard lock: $upgrade_guard_lock_host"
+    rm -f "$upgrade_guard_lock_path" >/dev/null 2>&1 || true
+    echo "[INFO] [ROLLBACK] Cleared upgrade guard lock: $upgrade_guard_lock_path"
 
     # Initialize SSH config and start container session
     init_ssh_config
