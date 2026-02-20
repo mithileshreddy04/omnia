@@ -1074,9 +1074,12 @@ def validate_omnia_config(
                     "slurm NFS not provided",
                     f"NFS name {', '.join(diff_set)} required for slurm is not defined in {storage_config}"
                     ))
-        cnfg_src = [clst.get('config_sources', {}) for clst in data.get('slurm_cluster')]
+
         skip_conf_validation = os.path.exists("/opt/omnia/input/.skip_slurm_conf_validation")
-        for cfg_path_dict in cnfg_src:
+        cnfg_src = [clst.get('config_sources', {}) for clst in data.get('slurm_cluster')]
+        skip_merge_list = [clst.get('skip_merge', False) for clst in data.get('slurm_cluster')]
+        for idx, cfg_path_dict in enumerate(cnfg_src):
+            skip_merge = skip_merge_list[idx]
             for k,v in cfg_path_dict.items():
                 conf_dict = None
                 if isinstance(v, str):
@@ -1086,7 +1089,7 @@ def validate_omnia_config(
                                 f"provided conf path for {k} - {v} does not exist"))
                         continue
                     else: # path exists
-                        if not skip_conf_validation:
+                        if not skip_merge and not skip_conf_validation:
                             conf_dict, duplicate_keys = parse_slurm_conf(v, k, False)
                             if duplicate_keys:
                                 errors.append(
