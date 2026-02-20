@@ -22,6 +22,16 @@
   register: ssh_check
   ignore_errors: true
 
+- name: Drain and remove nodes if any
+  ansible.builtin.include_tasks: drain_and_remove_node.yml
+  loop: "{{ nodes_in_normal_not_in_cmpt }}"
+  loop_control:
+    loop_var: node_to_remove
+  when:
+    - ssh_check is success
+    - nodes_in_normal_not_in_cmpt is defined
+    - nodes_in_normal_not_in_cmpt | length > 0
+
 - name: Enter slurm controller when pingable
   when:
     - ssh_check is success
@@ -37,7 +47,7 @@
       register: service_facts
       ignore_unreachable: true
 
-    - name: Fail if slurmctld is unreachable
+    - name: Check slurmctld is reachable
       ansible.builtin.fail:
         msg: "Failed to connect to {{ ctld }}."
       when: service_facts is unreachable
