@@ -13,6 +13,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.input_validation.common_utils import config
 
 DESCRIPTION_MAP = {
+    "minimal": "Minimal OS Node",
     "slurm_control_node": "Slurm Head",
     "slurm_node": "Slurm Worker",
     "login_node": "Login Node",

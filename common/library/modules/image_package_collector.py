@@ -232,7 +232,8 @@ def run_module():
     # pylint: disable=line-too-long
     # Functional group → json files mapping
     software_map = {
-        "default_x86_64": ["openldap.json"],
+        "minimal_x86_64": ["ldms.json"],
+        "minimal_aarch64": ["ldms.json"],
         "service_kube_node_x86_64": ["service_k8s.json"],
         "service_kube_control_plane_first_x86_64": ["service_k8s.json"],
         "service_kube_control_plane_x86_64": ["service_k8s.json"],

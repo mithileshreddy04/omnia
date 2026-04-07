@@ -189,7 +189,9 @@ FUNCTIONAL_GROUP_LAYER_MAP = {
     "login_compiler_node_aarch64": "management",
     "slurm_control_node_x86_64": "management",
     "slurm_node_x86_64": "compute",
-    "slurm_node_aarch64": "compute"
+    "slurm_node_aarch64": "compute",
+    "minimal_x86_64": "compute",
+    "minimal_aarch64": "compute"
 }
 
 # used for security_config.yml validation
