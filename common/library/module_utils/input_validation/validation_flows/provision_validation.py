@@ -526,8 +526,9 @@ def validate_parent_service_tag_hierarchy(pxe_mapping_file_path):
                     f"Management node with functional group '{fg}' at CSV row {row_idx} "
                     f"should not have parent_service_tag, but found: '{parent}'"
                 )
-        elif layer == "compute" and kube_cluster_present:
+        elif layer == "compute" and kube_cluster_present and not fg.startswith("minimal_"):
             # Compute nodes (slurm_node) MUST have a parent
+            # Minimal nodes are standalone compute nodes and do not require a parent
             if not parent:
                 hierarchy_errors.append(
                     f"Compute node with functional group '{fg}' at CSV row {row_idx} "
