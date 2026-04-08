@@ -21,6 +21,15 @@
   when: not project_dir_status | default(false) | bool
   ansible.builtin.import_playbook: ../utils/include_input_dir.yml
 
+- name: Load discovery configuration
+  hosts: localhost
+  connection: local
+  tasks:
+    - name: Include discovery config file
+      ansible.builtin.include_vars:
+        file: "{{ input_project_dir }}/discovery_config.yml"
+      failed_when: false
+
 - name: BMC Discovery Playbook
   hosts: localhost
   connection: local
