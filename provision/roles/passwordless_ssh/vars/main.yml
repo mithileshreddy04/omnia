@@ -47,5 +47,7 @@ omnia_optional_groups_from_nodes_yaml:
   - slurm_node_aarch64
   - login_node_aarch64
   - login_compiler_node_aarch64
+  - minimal_x86_64
+  - minimal_aarch64
 
 ssh_private_key_path: /root/.ssh/config
