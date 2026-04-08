@@ -13,9 +13,6 @@
 # limitations under the License.
 ---
 
-# Input config file paths
-discovery_config: "{{ input_project_dir }}/discovery_config.yml"
-
 # OME API endpoints
 ome_session_url: "https://{{ ome_ip }}/api/SessionService/Sessions"
 ome_devices_url: "https://{{ ome_ip }}/api/DeviceService/Devices"
@@ -37,21 +34,21 @@ ome_credentials_prompt_msg: |
 ome_connection_success_msg: "Successfully connected to OME at {{ ome_ip }}"
 ome_connection_fail_msg: "Failed to connect to OME at {{ ome_ip }}. Please verify credentials and network connectivity."
 
-discovery_complete_msg: |
-  ============================================================
-  OME Discovery Complete
-  ============================================================
-  BMC PXE mapping file generated: {{ pxe_mapping_output_file }}
-  Total servers discovered: {{ discovered_servers | length }}
-
-  Next Steps:
-  1. Review and edit the generated file:
-       {{ pxe_mapping_output_file }}
-  2. Update HOSTNAME, FUNCTIONAL_GROUP_NAME, GROUP_NAME as needed.
-  3. Rename or copy the file to:
-       input/pxe_mapping_file.csv
-  4. Run: ansible-playbook provision/provision.yml
-  ============================================================
+discovery_complete_msg:
+  - "============================================================"
+  - "OME Discovery Complete"
+  - "============================================================"
+  - "BMC PXE mapping file generated: {{ pxe_mapping_output_file }}"
+  - "Total servers discovered: {{ discovered_servers | length }}"
+  - ""
+  - "Next Steps:"
+  - "1. Review and edit the generated file:"
+  - "     {{ pxe_mapping_output_file }}"
+  - "2. Update HOSTNAME, FUNCTIONAL_GROUP_NAME, GROUP_NAME as needed."
+  - "3. Rename or copy the file to:"
+  - "     input/pxe_mapping_file.csv"
+  - "4. Run: ansible-playbook provision/provision.yml"
+  - "============================================================"
 
 no_servers_found_msg: |
   No servers found in OME inventory.
