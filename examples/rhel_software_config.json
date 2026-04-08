@@ -33,7 +33,8 @@
         {"name": "login_compiler_node"},
         {"name": "service_kube_control_plane_first"},
         {"name": "service_kube_control_plane"},
-        {"name": "service_kube_node"}        
+        {"name": "service_kube_node"},
+        {"name": "os"}        
     ]
 }
 

@@ -28,7 +28,8 @@
         {"name": "slurm_control_node"},
         {"name": "slurm_node"},
         {"name": "login_node"},
-        {"name": "login_compiler_node"}
+        {"name": "login_compiler_node"},
+        {"name": "os"}
     ]
 
 }

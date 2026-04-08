@@ -22,11 +22,11 @@ base_image_commands:
   - "echo DRACUT LOG:; cat /tmp/dracut.log"
 
 #  x86_64 compute commands
-minimal_x86_64_compute_commands:
+os_x86_64_compute_commands:
   - "echo 'Minimal OS x86_64 compute'"
 
 # aarch64 compute commands
-minimal_aarch64_compute_commands:
+os_aarch64_compute_commands:
   - "echo 'Minimal OS aarch64 compute'"
 
 login_node_x86_64_compute_commands:
