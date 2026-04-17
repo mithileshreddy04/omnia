@@ -17,7 +17,7 @@
 openchami_git_repo: https://github.com/OpenCHAMI/deployment-recipes.git
 openchami_share_dir: /opt/omnia/openchami
 openchami_clone_path: "{{ openchami_share_dir }}/deployment-recipes"
-openchami_git_version: main
+openchami_git_version: 92310bd537c05c201d5156137357bb742b09d5e0
 clone_retry: "5"
 clone_delay: "10"
 dir_permissions_755: "0755"
