@@ -63,7 +63,7 @@ openchami_images:
   - "ghcr.io/openchami/smd:{{ openchami_smd_tag }}"
   - "ghcr.io/openchami/bss:{{ openchami_bss_tag }}"
   - "ghcr.io/openchami/cloud-init:{{ openchami_cloud_init_tag }}"
-  - "ghcr.io/openchami/coredhcp:{{ openchami_coredhcp_tag }}"
+  - "ghcr.io/openchami/coresmd:{{ openchami_coredhcp_tag }}"
   - "docker.io/minio/minio:{{ minio_tag }}"
   - "docker.io/library/postgres:{{ postgres_tag }}"
   - "docker.io/oryd/hydra:{{ hydra_tag }}"
