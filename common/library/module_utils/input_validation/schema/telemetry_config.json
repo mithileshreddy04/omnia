@@ -10,7 +10,7 @@
       "type": "boolean",
       "description": "Enable or disable NVIDIA DCGM (Data Center GPU Manager) on GPU compute nodes. When true, nvidia-dcgm.service is started during cloud-init provisioning. Default: true"
     },
-    "idrac_telemetry_collection_type": {
+    "telemetry_collection_type": {
       "anyOf": [
         {
           "type": "string",
@@ -42,6 +42,53 @@
       "maximum": 10100,
       "default": 10001,
       "description": "LDMS sampler port on compute nodes. Valid range: 10001-10100. Default: 10001"
+    },
+    "powerscale_configurations": {
+      "type": "object",
+      "properties": {
+        "powerscale_telemetry_support": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable PowerScale telemetry support. Requires csi_driver_powerscale in software_config.json."
+        },
+        "powerscale_log_enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable or disable PowerScale log collection (syslog to VictoriaLogs). Requires powerscale_telemetry_support: true."
+        },
+        "otel_collector_storage_size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|Pi|Ei)$",
+          "default": "5Gi",
+          "description": "PVC size for OTEL Collector metric batching and buffering."
+        },
+        "csm_observability_values_file_path": {
+          "type": "string",
+          "description": "Path to the user-provided Helm values file for karavi-observability chart. Required when powerscale_telemetry_support is true."
+        },
+        "additional_remote_write_endpoints": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "pattern": "^https?://",
+                "description": "VictoriaMetrics remote_write endpoint URL."
+              },
+              "tls_insecure_skip_verify": {
+                "type": "boolean",
+                "default": false,
+                "description": "Skip TLS certificate verification for this endpoint."
+              }
+            },
+            "required": ["url"]
+          },
+          "description": "Additional VictoriaMetrics remote_write endpoints. vmagent writes to all configured endpoints."
+        }
+      },
+      "required": ["powerscale_telemetry_support", "otel_collector_storage_size", "csm_observability_values_file_path"]
     },
     "ldms_sampler_configurations": {
       "anyOf": [
@@ -126,7 +173,7 @@
       ]
     }
   },
-  "required": ["idrac_telemetry_support", "dcgm_support", "idrac_telemetry_collection_type", "ldms_sampler_configurations", "ldms_agg_port", "ldms_store_port", "ldms_sampler_port" ],
+  "required": ["idrac_telemetry_support", "dcgm_support", "telemetry_collection_type", "ldms_sampler_configurations", "ldms_agg_port", "ldms_store_port", "ldms_sampler_port", "powerscale_configurations" ],
   "$defs": {
     "kafka_configurations": {
       "type": "object",
@@ -177,7 +224,7 @@
             }
           },
           "uniqueItems": true,
-          "description": "IMPORTANT: At least one Kafka topic must be defined. Topic names 'idrac' and 'ldms' are CONSTANTS. 'idrac' is required if idrac_telemetry_support is true and kafka is in idrac_telemetry_collection_type. 'ldms' is required if LDMS software is configured in software_config.json (automatic detection). Only partition counts can be changed.",
+          "description": "IMPORTANT: At least one Kafka topic must be defined. Topic names 'idrac' and 'ldms' are CONSTANTS. 'idrac' is required if idrac_telemetry_support is true and kafka is in telemetry_collection_type. 'ldms' is required if LDMS software is configured in software_config.json (automatic detection). Only partition counts can be changed.",
           "errorMessage": {
             "minItems": "At least 1 Kafka topic must be defined. Configure based on enabled features.",
             "maxItems": "Maximum 2 topics allowed: 'idrac' and 'ldms'",
@@ -194,18 +241,9 @@
       ],
       "additionalProperties": false
     },
-    "victoria_configurations": {
+    "victoria_metrics_configurations": {
       "type": "object",
       "properties": {
-        "deployment_mode": {
-          "type": "string",
-          "enum": ["single-node", "cluster"],
-          "default": "cluster",
-          "description": "VictoriaMetrics deployment mode. 'single-node' for simple deployment (1 pod), 'cluster' for high-availability deployment (7 pods). Default: 'cluster'",
-          "errorMessage": {
-            "enum": "deployment_mode must be either 'single-node' or 'cluster'"
-          }
-        },
         "persistence_size": {
           "type": "string",
           "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|Pi|Ei)$"
@@ -216,10 +254,28 @@
         }
       },
       "required": [
-        "deployment_mode",
         "persistence_size",
         "retention_period"
       ],
+      "additionalProperties": false
+    },
+    "victoria_logs_configurations": {
+      "type": "object",
+      "description": "VictoriaLogs cluster mode configuration. Deployed alongside VictoriaMetrics when 'victoria' is in collection type.",
+      "properties": {
+        "storage_size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Ki|Mi|Gi|Ti|Pi|Ei)$",
+          "default": "8Gi",
+          "description": "Storage size per vlstorage replica PVC. Total = storage_size x 3 replicas.",
+          "errorMessage": "storage_size must be a valid Kubernetes PVC size (e.g., '8Gi', '50Gi', '1Ti')"
+        },
+        "retention_period": {
+          "type": "integer",
+          "minimum": 24
+        }
+      },
+      "required": ["storage_size", "retention_period"],
       "additionalProperties": false
     }
   },
@@ -228,7 +284,7 @@
       "if": {
         "properties": {
             "idrac_telemetry_support": { "const": true },
-            "idrac_telemetry_collection_type": { "pattern": "(?i)^kafka$" }
+            "telemetry_collection_type": { "pattern": "(?i)^kafka$" }
         }
       },
       "then": {
@@ -242,13 +298,14 @@
       "if": {
         "properties": {
           "idrac_telemetry_support": { "const": true },
-          "idrac_telemetry_collection_type": { "pattern": "(?i)^victoria$" }
+          "telemetry_collection_type": { "pattern": "(?i)^victoria$" }
         }
       },
       "then": {
-        "required": ["victoria_configurations"],
+        "required": ["victoria_metrics_configurations", "victoria_logs_configurations"],
         "properties": {
-          "victoria_configurations": { "$ref": "#/$defs/victoria_configurations" }
+          "victoria_metrics_configurations": { "$ref": "#/$defs/victoria_metrics_configurations" },
+          "victoria_logs_configurations": { "$ref": "#/$defs/victoria_logs_configurations" }
         }
       }
     },
@@ -256,16 +313,17 @@
       "if": {
         "properties": {
           "idrac_telemetry_support": { "const": true },
-          "idrac_telemetry_collection_type": {
+          "telemetry_collection_type": {
             "pattern": "(?i)^(victoria,kafka|kafka,victoria)$"
           }
         }
       },
       "then": {
-        "required": ["kafka_configurations", "victoria_configurations"],
+        "required": ["kafka_configurations", "victoria_metrics_configurations", "victoria_logs_configurations"],
         "properties": {
           "kafka_configurations": { "$ref": "#/$defs/kafka_configurations" },
-          "victoria_configurations": { "$ref": "#/$defs/victoria_configurations" }
+          "victoria_metrics_configurations": { "$ref": "#/$defs/victoria_metrics_configurations" },
+          "victoria_logs_configurations": { "$ref": "#/$defs/victoria_logs_configurations" }
         }
       }
     }

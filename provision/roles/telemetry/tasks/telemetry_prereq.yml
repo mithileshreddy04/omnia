@@ -69,7 +69,7 @@
 - name: Set kafka_support to true
   ansible.builtin.set_fact:
     kafka_support: true
-  when: "'kafka' in hostvars['localhost']['idrac_telemetry_collection_type'].split(',') or hostvars['localhost']['ldms_support']"
+  when: "'kafka' in hostvars['localhost']['telemetry_collection_type'].split(',') or hostvars['localhost']['ldms_support']"
 
 - name: Configure TLS certificate and secrets for kafka
   when: kafka_support
@@ -100,7 +100,9 @@
       when: not cluster_id_present | default(false)
 
 - name: Configure TLS certificate for VictoriaMetrics
-  when: "'victoria' in hostvars['localhost']['idrac_telemetry_collection_type']"
+  when:
+    - "'victoria' in hostvars['localhost']['telemetry_collection_type']"
+    - victoria_cluster.tls_enabled | default(false) | bool
   block:
     - name: Create VictoriaMetrics certificate directory
       ansible.builtin.file:

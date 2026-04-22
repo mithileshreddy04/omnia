@@ -1041,6 +1041,10 @@
             systemctl restart nfs-client.target
             systemctl restart rpcbind
 
+{% if hostvars['localhost']['powerscale_configurations']['powerscale_telemetry_support'] | default(false) | bool %}
+{% include 'powerscale/deploy_powerscale_telemetry.sh.j2' %}
+{% endif %}
+
 {% if hostvars['localhost']['idrac_telemetry_support'] or hostvars['localhost']['ldms_support'] %}
             echo "Applying Telemetry Kubernetes deployments"
             /root/telemetry.sh

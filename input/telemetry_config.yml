@@ -38,8 +38,6 @@
 # ┌─────────────────┬──────────────────┬─────────────────┬──────────────────┐
 # │ Deployment Mode │ Per-Pod Storage  │ Number of Pods  │ Total Storage    │
 # ├─────────────────┼──────────────────┼─────────────────┼──────────────────┤
-# │ Single-node     │ persistence_size │ 1 pod           │ 1× storage       │
-# ├─────────────────┼──────────────────┼─────────────────┼──────────────────┤
 # │ Cluster         │ persistence_size │ 3 vmstorage     │ 3× storage       │
 # └─────────────────┴──────────────────┴─────────────────┴──────────────────┘
 # Example: 8Gi per pod → Single-node: 8Gi total, Cluster: 24Gi total
@@ -58,7 +56,6 @@
 #
 # COMBINED STORAGE EXAMPLES:
 #   Default (8Gi each): VictoriaMetrics Cluster (24Gi) + Kafka (48Gi) = 72Gi total
-#   Single-node mode:   VictoriaMetrics Single (8Gi) + Kafka (48Gi) = 56Gi total
 #
 # STORAGE OPTIONS:
 #   - VictoriaMetrics: Store iDRAC telemetry in time-series database
@@ -83,7 +80,7 @@ idrac_telemetry_support: true
 #   - "kafka"           : Store in Kafka only
 #   - "victoria,kafka"  : Store in both (recommended)
 # Default: "victoria,kafka"
-idrac_telemetry_collection_type: "victoria,kafka"
+telemetry_collection_type: "victoria,kafka"
 
 # ============================================================================
 # NVIDIA DCGM (Data Center GPU Manager) CONFIGURATION
@@ -111,34 +108,14 @@ dcgm_support: true
 # VICTORIAMETRICS CONFIGURATION
 # ============================================================================
 # VictoriaMetrics is a time-series database for storing telemetry metrics.
-# Used for iDRAC telemetry when 'victoria' is enabled in idrac_telemetry_collection_type.
+# Used for iDRAC telemetry when 'victoria' is enabled in telemetry_collection_type.
 #
 # DEPLOYMENT MODES:
-#   - single-node: Simple deployment with one pod (suitable for small deployments)
 #   - cluster: High-availability deployment with multiple components
 #               (recommended for production and large-scale deployments)
-victoria_configurations:
-  # VictoriaMetrics deployment mode
-  # Supported values:
-  #   - "single-node" : Simple deployment (1 pod, suitable for dev/test)
-  #   - "cluster"     : High-availability deployment (7 pods, recommended for production)
-  # Default: "cluster"
-  #
-  # Cluster Mode Benefits:
-  #   - High availability (no single point of failure)
-  #   - Horizontal scalability (scale components independently)
-  #   - Better performance (4x ingestion, 2x query speed)
-  #   - Production-ready architecture
-  #
-  # Single-Node Benefits:
-  #   - Simple setup (fewer resources)
-  #   - Suitable for small deployments (<10 nodes)
-  #   - Lower resource usage (~4Gi memory vs ~10Gi for cluster)
-  deployment_mode: "cluster"
-
+victoria_metrics_configurations:
   # The amount of storage allocated for EACH VictoriaMetrics persistent volume.
   # IMPORTANT: Total VictoriaMetrics storage depends on deployment mode:
-  #   - Single-node mode: Total storage = persistence_size × 1 pod
   #   - Cluster mode: Total storage = persistence_size × 3 vmstorage pods
   #   - Example (cluster): 8Gi × 3 = 24Gi total VictoriaMetrics storage
   # Accepted values: in the form of "X[Ki|Mi|Gi|Ti|Pi|Ei]"
@@ -150,10 +127,42 @@ victoria_configurations:
   retention_period: 168
 
 # ============================================================================
+# VICTORIALOGS CONFIGURATION
+# ============================================================================
+# VictoriaLogs provides centralized log storage and querying (cluster mode only).
+# Deployed alongside VictoriaMetrics when 'victoria' is in telemetry_collection_type.
+#
+# DEPLOYMENT:
+#   - Always cluster mode (vlstorage, vlinsert, vlselect, VLAgent)
+#   - Co-deployed with VictoriaMetrics — same deployment gate
+#   - Shares TLS infrastructure with VictoriaMetrics
+#
+# STORAGE REQUIREMENTS:
+# ┌─────────────────┬──────────────────┬─────────────────┬──────────────────┐
+# │ Component       │ Per-Pod Storage  │ Number of Pods  │ Total Storage    │
+# ├─────────────────┼──────────────────┼─────────────────┼──────────────────┤
+# │ vlstorage       │ storage_size     │ 3 pods          │ 3× storage       │
+# ├─────────────────┼──────────────────┼─────────────────┼──────────────────┤
+# │ VLAgent buffer  │ 5Gi (fixed)      │ 1 pod           │ 5Gi              │
+# └─────────────────┴──────────────────┴─────────────────┴──────────────────┘
+# Example: 8Gi × 3 vlstorage = 24Gi + 5Gi VLAgent = 29Gi total
+victoria_logs_configurations:
+  # Storage size per vlstorage replica PVC
+  # IMPORTANT: Total VictoriaLogs storage = storage_size × 3 vlstorage pods
+  # Accepted values: in the form of "X[Ki|Mi|Gi|Ti|Pi|Ei]"
+  # Default: 8Gi (results in 24Gi total storage)
+  storage_size: "8Gi"
+
+  # Log retention period (duration format)
+  # Logs older than this period are automatically purged by vlstorage.
+  # Default: 168 (7 days)
+  retention_period: 168
+
+# ============================================================================
 # KAFKA CONFIGURATION
 # ============================================================================
 # Apache Kafka is a distributed streaming platform for storing telemetry data.
-# Used for iDRAC telemetry when 'kafka' is enabled in idrac_telemetry_collection_type.
+# Used for iDRAC telemetry when 'kafka' is enabled in telemetry_collection_type.
 # Also used for LDMS telemetry when LDMS software is configured.
 #
 # NOTE: Kafka topics are auto-generated based on enabled features:
@@ -281,3 +290,97 @@ ldms_sampler_configurations:
   - plugin_name: procnetdev2
     config_parameters: ""  # Monitor all interfaces
     activation_parameters: "interval=30000000 offset=0"  # interval=30000000 microseconds (30 seconds), offset=0
+
+# ============================================================================
+# POWERSCALE TELEMETRY CONFIGURATION
+# ============================================================================
+# PowerScale telemetry collects storage metrics from Dell PowerScale (OneFS)
+# clusters using the CSM (Container Storage Modules) Metrics PowerScale exporter.
+#
+# DATA PIPELINE:
+#   CSM Metrics PowerScale → OTEL Collector → vmagent-powerscale → VictoriaMetrics
+#
+# Metrics collected: capacity, performance, topology, and quota metrics via
+# OneFS REST API. Metrics are processed through an OpenTelemetry Collector
+# and ingested into the shared VictoriaMetrics cluster (same as iDRAC telemetry).
+#
+# AUTHENTICATION MODES (auto-detected from CSM Observability values.yaml):
+#   - Direct Authentication: CSM Metrics connects directly to PowerScale using
+#     credentials from the CSI driver secret.yaml (isilon-creds)
+#   - Karavi Authorization: CSM Metrics connects via Karavi Authorization Proxy
+#     sidecar with token-based authentication
+#
+# PREREQUISITES:
+#   - csi_driver_powerscale must be configured in software_config.json
+#   - Service cluster must be defined in functional_groups_config.yml
+#   - VictoriaMetrics must be enabled: 'victoria' must be included in
+#     telemetry_collection_type (e.g., "victoria" or "victoria,kafka")
+#   - CSI driver secret.yaml with valid isilonClusters credentials
+#   - CSM Observability values.yaml must be provided
+#
+# STORAGE REQUIREMENTS:
+# ┌─────────────────────┬──────────────┬──────────────┬──────────────────┐
+# │ Component           │ Per-Pod PVC  │ Pods         │ Total Storage    │
+# ├─────────────────────┼──────────────┼──────────────┼──────────────────┤
+# │ OTEL Collector      │ 5Gi          │ 1 per cluster│ 5Gi per cluster  │
+# └─────────────────────┴──────────────┴──────────────┴──────────────────┘
+
+powerscale_configurations:
+  # Enable or disable PowerScale telemetry support
+  # Accepted values: true or false
+  # Default: true
+  powerscale_telemetry_support: true
+
+  # Enable or disable PowerScale log collection (syslog → VictoriaLogs)
+  # Requires powerscale_telemetry_support: true
+  # Accepted values: true or false
+  # Default: false
+  powerscale_log_enabled: false
+
+  # PVC size for OTEL Collector metric batching and buffering.
+  # Adjust based on cluster scale and metric volume.
+  # Accepted values: in the form of "X[Ki|Mi|Gi|Ti|Pi|Ei]"
+  # Default: "5Gi"
+  otel_collector_storage_size: "5Gi"
+
+  # Path to the CSM Observability (Karavi Observability) values.yaml file.
+  # This file provides:
+  #   - Container image versions for CSM Metrics, OTEL Collector, and Karavi sidecar
+  #   - Authentication settings (Direct vs. Karavi Authorization)
+  #   - Poll frequencies for each metric domain
+  #   - ISI client options for PowerScale OneFS API
+  #
+  # At minimum, configure the karaviMetricsPowerscale section (set enabled: true,
+  # disable other storage backends like powerflex/powerstore/powermax):
+  #   karaviMetricsPowerscale:
+  #     enabled: true
+  #     ...
+  #
+  # AUTHENTICATION MODE (configured in the Helm values file):
+  #   Mode A - Direct Authentication (default):
+  #     karaviMetricsPowerscale.authorization.enabled: false (or omit)
+  #     Only isilon-creds secret is copied to the telemetry namespace.
+  #
+  #   Mode B - Karavi Authorization:
+  #     karaviMetricsPowerscale.authorization.enabled: true
+  #     karaviMetricsPowerscale.authorization.proxyHost: "<csm-auth-proxy-host>"
+  #     Requires CSI driver deployed with CSM Authorization enabled.
+  #     Additional resources are automatically copied to the telemetry namespace:
+  #       - isilon-config-params ConfigMap
+  #       - isilon-proxy-server-root-certificate Secret
+  #       - isilon-proxy-authz-tokens Secret
+  #
+  # Required when powerscale_configurations.powerscale_telemetry_support: true
+  # Reference: https://github.com/dell/helm-charts/blob/main/charts/karavi-observability/values.yaml
+  csm_observability_values_file_path: ""
+
+  # Additional VictoriaMetrics remote_write endpoints (optional)
+  # vmagent will write the same PowerScale metrics to ALL configured endpoints.
+  # Each endpoint receives an identical copy of all metrics.
+  # The primary Omnia VictoriaMetrics endpoint (vminsert) is always included automatically.
+  # Default: [] (empty — only the primary Omnia VictoriaMetrics endpoint is used)
+  # Example:
+  #   additional_remote_write_endpoints:
+  #     - url: "https://external-victoria.example.com:8480/insert/0/prometheus/api/v1/write"
+  #       tls_insecure_skip_verify: true
+  additional_remote_write_endpoints: []

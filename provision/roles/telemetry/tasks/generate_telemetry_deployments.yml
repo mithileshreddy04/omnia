@@ -33,11 +33,21 @@
     dest: "{{ hostvars['localhost']['k8s_client_share_path'] }}/telemetry/deployments/{{ item.dest }}"
     mode: "{{ hostvars['localhost']['file_permissions_644'] }}"
   loop: "{{ victoria_templates }}"
-  when: "'victoria' in hostvars['localhost']['idrac_telemetry_collection_type'].split(',')"
+  when: "'victoria' in hostvars['localhost']['telemetry_collection_type'].split(',')"
   tags: telemetry_deployment
-  # NOTE: victoria_templates is automatically set based on deployment_mode in telemetry_config.yml
+  # NOTE: victoria_templates is automatically set based on victoria_deployment_mode in vars/main.yml
   #       - cluster mode: includes vmstorage, vminsert, vmselect templates
   #       - single-node mode: includes victoria-statefulset template
+
+- name: Populate VictoriaLogs deployment configs
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ hostvars['localhost']['k8s_client_share_path'] }}/telemetry/deployments/{{ item.dest }}"
+    mode: "{{ hostvars['localhost']['file_permissions_644'] }}"
+  loop: "{{ victorialogs_templates }}"
+  when: "'victoria' in hostvars['localhost']['telemetry_collection_type'].split(',')"
+  tags: telemetry_deployment
+  # NOTE: victorialogs_templates includes VLCluster CR, VLAgent CR, and VLAgent ConfigMap
 
 - name: Kafka configurations
   when: kafka_support
@@ -72,7 +82,7 @@
           }] }}
       when:
         - hostvars['localhost']['idrac_telemetry_support']
-        - "'kafka' in hostvars['localhost']['idrac_telemetry_collection_type'].split(',')"
+        - "'kafka' in hostvars['localhost']['telemetry_collection_type'].split(',')"
         - "kafka.topics.idrac.name in kafka_topic_partitions"
 
     - name: Add ldms topic if enabled
@@ -113,6 +123,19 @@
       ansible.builtin.get_url:
         url: "{{ strmzi_kafka_tarball_url }}"
         dest: "{{ hostvars['localhost']['k8s_client_share_path'] }}/telemetry/{{ strimzi_kafka_pkg }}.tar.gz"
+        mode: "{{ hostvars['localhost']['file_permissions_644'] }}"
+
+- name: Victoria Metrics operator configuration
+  when: "'victoria' in hostvars['localhost']['telemetry_collection_type'].split(',')"
+  block:
+    - name: Extract and set facts for tarball URLs for victoria metrics operator
+      ansible.builtin.set_fact:
+        victoria_operator_pkg: "{{ k8s_packages_json['service_k8s']['cluster'] | selectattr('type', 'equalto', 'tarball') | selectattr('package', 'search', 'victoria-metrics-operator') | map(attribute='package') | join }}" # noqa: yaml[line-length]
+
+    - name: Download victoria metrics operator tarball
+      ansible.builtin.get_url:
+        url: "{{ victoria_operator_tarball_url }}"
+        dest: "{{ hostvars['localhost']['k8s_client_share_path'] }}/telemetry/{{ victoria_operator_pkg }}.tar.gz"
         mode: "{{ hostvars['localhost']['file_permissions_644'] }}"
 
 - name: Populate common telemetry deployment configs

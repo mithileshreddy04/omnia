@@ -52,25 +52,56 @@ DNS.5 = victoria-metric-0
 DNS.6 = victoria-metric-0.{{ telemetry_namespace }}
 DNS.7 = victoria-metric-0.{{ telemetry_namespace }}.svc
 DNS.8 = victoria-metric-0.{{ telemetry_namespace }}.svc.cluster.local
-# Cluster deployment names
-DNS.9 = vminsert
-DNS.10 = vminsert.{{ telemetry_namespace }}
-DNS.11 = vminsert.{{ telemetry_namespace }}.svc
-DNS.12 = vminsert.{{ telemetry_namespace }}.svc.cluster.local
-DNS.13 = vmselect
-DNS.14 = vmselect.{{ telemetry_namespace }}
-DNS.15 = vmselect.{{ telemetry_namespace }}.svc
-DNS.16 = vmselect.{{ telemetry_namespace }}.svc.cluster.local
-DNS.17 = vmstorage
-DNS.18 = vmstorage.{{ telemetry_namespace }}
-DNS.19 = vmstorage.{{ telemetry_namespace }}.svc
-DNS.20 = vmstorage.{{ telemetry_namespace }}.svc.cluster.local
-# VMStorage StatefulSet pods
-DNS.21 = vmstorage-0.vmstorage.{{ telemetry_namespace }}.svc.cluster.local
-DNS.22 = vmstorage-1.vmstorage.{{ telemetry_namespace }}.svc.cluster.local
-DNS.23 = vmstorage-2.vmstorage.{{ telemetry_namespace }}.svc.cluster.local
+# Cluster deployment names (operator-managed)
+DNS.9 = vminsert-victoria-cluster
+DNS.10 = vminsert-victoria-cluster.{{ telemetry_namespace }}
+DNS.11 = vminsert-victoria-cluster.{{ telemetry_namespace }}.svc
+DNS.12 = vminsert-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.13 = vmselect-victoria-cluster
+DNS.14 = vmselect-victoria-cluster.{{ telemetry_namespace }}
+DNS.15 = vmselect-victoria-cluster.{{ telemetry_namespace }}.svc
+DNS.16 = vmselect-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.17 = vmstorage-victoria-cluster
+DNS.18 = vmstorage-victoria-cluster.{{ telemetry_namespace }}
+DNS.19 = vmstorage-victoria-cluster.{{ telemetry_namespace }}.svc
+DNS.20 = vmstorage-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local
+# VMStorage StatefulSet pods (operator-managed)
+DNS.21 = vmstorage-victoria-cluster-0.vmstorage-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.22 = vmstorage-victoria-cluster-1.vmstorage-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.23 = vmstorage-victoria-cluster-2.vmstorage-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local
+# VictoriaLogs cluster deployment names (operator-managed)
+DNS.24 = vlinsert-victoria-logs-cluster
+DNS.25 = vlinsert-victoria-logs-cluster.{{ telemetry_namespace }}
+DNS.26 = vlinsert-victoria-logs-cluster.{{ telemetry_namespace }}.svc
+DNS.27 = vlinsert-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.28 = vlselect-victoria-logs-cluster
+DNS.29 = vlselect-victoria-logs-cluster.{{ telemetry_namespace }}
+DNS.30 = vlselect-victoria-logs-cluster.{{ telemetry_namespace }}.svc
+DNS.31 = vlselect-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.32 = vlstorage-victoria-logs-cluster
+DNS.33 = vlstorage-victoria-logs-cluster.{{ telemetry_namespace }}
+DNS.34 = vlstorage-victoria-logs-cluster.{{ telemetry_namespace }}.svc
+DNS.35 = vlstorage-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local
+# vlstorage StatefulSet pod FQDNs (operator-managed, 3 replicas)
+DNS.36 = vlstorage-victoria-logs-cluster-0.vlstorage-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.37 = vlstorage-victoria-logs-cluster-1.vlstorage-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local
+DNS.38 = vlstorage-victoria-logs-cluster-2.vlstorage-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local
 IP.1 = 127.0.0.1
 EOF
+
+# Check if existing cert has the required operator-managed SANs
+# If SANs are stale (missing operator-managed names), force server cert regeneration
+# CA is preserved so external clients do not need to re-import it
+if [ -f "$CERT_FILE" ]; then
+  REQUIRED_SAN="vminsert-victoria-cluster.{{ telemetry_namespace }}.svc.cluster.local"
+  REQUIRED_VL_SAN="vlinsert-victoria-logs-cluster.{{ telemetry_namespace }}.svc.cluster.local"
+  if ! openssl x509 -in "$CERT_FILE" -text -noout 2>/dev/null | grep -q "$REQUIRED_SAN" || \
+     ! openssl x509 -in "$CERT_FILE" -text -noout 2>/dev/null | grep -q "$REQUIRED_VL_SAN"; then
+    echo "Existing certificate missing required SAN: $REQUIRED_SAN"
+    echo "Removing stale server cert/key/csr to force regeneration..."
+    rm -f "$CERT_KEY" "$CSR_FILE" "$CERT_FILE"
+  fi
+fi
 
 # Generate CA key
 if [ ! -f "$CA_KEY" ]; then

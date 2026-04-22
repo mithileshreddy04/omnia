@@ -99,12 +99,13 @@ victoria:
   image: "{{ telemetry_images['victoriametrics/victoria-metrics'] | default('victoriametrics/victoria-metrics:v1.128.0') }}"
 
 # VictoriaMetrics Cluster Configuration
-# Deployment mode is controlled by victoria_configurations.deployment_mode in telemetry_config.yml
+# Deployment mode is controlled by victoria_deployment_mode variable (default: cluster)
 # Supported modes: "single-node" or "cluster"
+victoria_deployment_mode: "cluster"  # Default deployment mode for VictoriaMetrics
 victoria_cluster:
-  # Auto-configured based on telemetry_config.yml
+  # Auto-configured based on victoria_deployment_mode variable
   # true = cluster mode, false = single-node mode
-  enabled: "{{ true if hostvars['localhost']['victoria_configurations']['deployment_mode'] == 'cluster' else false }}"
+  enabled: "{{ true if victoria_deployment_mode == 'cluster' else false }}"
   tls_enabled: true   # Set to true to enable TLS for cluster components
   # VMStorage: Stores raw data and returns query results
   vmstorage:
@@ -146,6 +147,89 @@ victoria_cluster:
         memory: "1Gi"
         cpu: "1000m"
 
+  vmagent:
+    replicas: 1
+    image: "{{ telemetry_images['victoriametrics/vmagent'] | default('victoriametrics/vmagent:v1.128.0') }}"
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "512Mi"
+        cpu: "250m"
+
+# ============================================================================
+# VictoriaLogs Cluster Configuration
+# ============================================================================
+# Deployed alongside VictoriaMetrics when 'victoria' is in telemetry_collection_type.
+# Managed by the same VictoriaMetrics operator via VLCluster and VLAgent CRs.
+# See VL_cluster_component_spec.md and VL_Agent_component_spec.md for full design.
+victoria_logs_cluster:
+  tls_enabled: true   # Enable TLS for all inter-component communication (shared victoria-tls-certs secret)
+
+  # vlstorage: Persistent log storage nodes (StatefulSet managed by operator via VLCluster CR)
+  vlstorage:
+    replicas: 3
+    image: "{{ telemetry_images['victoriametrics/victoria-logs'] | default('docker.io/victoriametrics/victoria-logs:v1.49.0') }}"
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+
+  # vlinsert: Log ingestion gateway (Deployment managed by operator via VLCluster CR)
+  vlinsert:
+    replicas: 2
+    image: "{{ telemetry_images['victoriametrics/victoria-logs'] | default('docker.io/victoriametrics/victoria-logs:v1.49.0') }}"
+    external_access: true   # Expose vlinsert via LoadBalancer service for external log ingestion
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1000m"
+
+  # vlselect: Log query gateway (Deployment managed by operator via VLCluster CR)
+  vlselect:
+    replicas: 2
+    image: "{{ telemetry_images['victoriametrics/victoria-logs'] | default('docker.io/victoriametrics/victoria-logs:v1.49.0') }}"
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "1000m"
+
+  # VLAgent: Platform-managed log forwarding agent (Deployment managed by operator via VLAgent CR)
+  vlagent:
+    replicas: 1
+    image: "{{ telemetry_images['victoriametrics/vlagent'] | default('docker.io/victoriametrics/vlagent:v1.49.0') }}"
+    pvc_size: "5Gi"   # Buffer storage for retry during vlinsert unavailability
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "512Mi"
+        cpu: "250m"
+
+# VictoriaLogs ports (operator v0.66.1 defaults)
+# Note: VictoriaMetrics operator uses these default ports and ignores custom port specifications
+# will uncomment after verify that victoria oprator does not takes default port
+# victoria_logs_ports:
+#   vlinsert_http: 9481        # Ingestion clients → vlinsert (HTTPS, LoadBalancer) - operator default
+#   vlselect_http: 9471        # Query clients → vlselect (HTTPS, LoadBalancer) - operator default
+#   vlstorage_http: 9491       # Health checks and admin API (internal) - operator default
+#   vlstorage_insert: 9400     # vlinsert → vlstorage data sharding (HTTPS, internal)
+#   vlstorage_select: 9401     # vlselect → vlstorage query fan-out (HTTPS, internal)
+#   vlagent_syslog: 514        # Syslog receiver plaintext (TCP+UDP)
+#   vlagent_syslog_tls: 6514   # Syslog receiver TLS (TCP, RFC 5425)
+#   vlagent_http: 9429         # VLAgent health checks (distinct from vmagent 8429)
+
 # Telemetry shared path configuration
 telemetry_share_path: "{{ hostvars['localhost']['oim_shared_path'] }}/omnia/telemetry"
 
@@ -173,11 +257,19 @@ vmagent:
   # Single-node URL
   remote_write_url: "https://victoria-loadbalancer.telemetry.svc.cluster.local:8443/api/v1/write"
   # Cluster URL (used when victoria_cluster.enabled: true)
-  remote_write_url_cluster: >
-    {% if victoria_cluster.tls_enabled %}https{% else %}
-    http{% endif %}://vminsert.{{ telemetry_namespace }}.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
+  # Operator creates service as vminsert-victoria-cluster (not vminsert)
+  # Protocol depends on tls_enabled: https when TLS is on, http otherwise
+  remote_write_url_cluster: >-
+    {{ 'https' if victoria_cluster.tls_enabled else 'http' }}://vminsert-victoria-cluster.{{
+    telemetry_namespace }}.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
 
 strmzi_kafka_tarball_url: "{{ offline_tarball_path }}/{{ strimzi_kafka_pkg }}/{{ strimzi_kafka_pkg }}.tar.gz"
+
+# Victoria Metrics operator tarball configuration
+# Version must match the Helm chart entry in service_k8s.json (victoria-metrics-operator-0.59.3)
+# Required for VLCluster and VLAgent CRD support (minimum v0.59.0)
+victoria_operator_pkg: "victoria-metrics-operator-0.59.3"
+victoria_operator_tarball_url: "{{ offline_tarball_path }}/{{ victoria_operator_pkg }}/{{ victoria_operator_pkg }}.tar.gz"
 
 # Usage: validate_idrac_inventory.yml
 bmc_group_data_filename: "/opt/omnia/telemetry/bmc_group_data.csv"
@@ -193,30 +285,42 @@ common_mode: "0755"
 # Usage: generate_telemetry_deployments.yml - Template lists for different components
 # Victoria templates - conditional based on victoria_cluster.enabled
 victoria_templates_common:
-  - src: 'telemetry/victoria/victoria-tls-secret.yaml.j2'
-    dest: 'victoria-tls-secret.yaml'
   - src: 'telemetry/victoria/victoria-vmagent-rbac.yaml.j2'
     dest: 'victoria-vmagent-rbac.yaml'
-  - src: 'telemetry/victoria/vmagent-scrape-config.yaml.j2'
-    dest: 'vmagent-scrape-config.yaml'
-  - src: 'telemetry/victoria/victoria-agent-deployment.yaml.j2'
-    dest: 'victoria-agent-deployment.yaml'
+
+# Operator-based templates (new default)
+# Single-node operator template (used when victoria_cluster.enabled: false)
+victoria_templates_operator_single:
+  - src: 'telemetry/victoria/victoria-operator-vmsingle.yaml.j2'
+    dest: 'victoria-operator-vmsingle.yaml'
+  - src: 'telemetry/victoria/victoria-operator-vmagent.yaml.j2'
+    dest: 'victoria-operator-vmagent.yaml'
+  - src: 'telemetry/victoria/victoria-operator-vmpodscrape.yaml.j2'
+    dest: 'victoria-operator-vmpodscrape.yaml'
+
+# Cluster operator template (used when victoria_cluster.enabled: true)
+victoria_templates_operator_cluster:
+  - src: 'telemetry/victoria/victoria-operator-vmcluster.yaml.j2'
+    dest: 'victoria-operator-vmcluster.yaml'
+  - src: 'telemetry/victoria/victoria-operator-vmagent.yaml.j2'
+    dest: 'victoria-operator-vmagent.yaml'
+  - src: 'telemetry/victoria/victoria-operator-vmpodscrape.yaml.j2'
+    dest: 'victoria-operator-vmpodscrape.yaml'
+
+# Legacy manual deployment templates (removed - use operator-based templates above)
+# Raw victoria-cluster-vminsert/vmselect/vmstorage.yaml.j2 files have been removed
+# in favor of the operator-managed victoria-operator-vmcluster.yaml.j2
 
 idrac_telemetry_statefulset_path: "{{ hostvars['localhost']['k8s_client_share_path'] }}/telemetry/deployments/idrac_telemetry_statefulset.yaml"
 
 # Single-node templates (used when victoria_cluster.enabled: false)
 victoria_templates_single:
+  - src: 'telemetry/victoria/victoria-tls-secret.yaml.j2'
+    dest: 'victoria-tls-secret.yaml'
   - src: 'telemetry/victoria/victoria-statefulset.yaml.j2'
     dest: 'victoria-statefulset.yaml'
-
-# Cluster templates (used when victoria_cluster.enabled: true)
-victoria_templates_cluster:
-  - src: 'telemetry/victoria/victoria-cluster-vmstorage.yaml.j2'
-    dest: 'victoria-cluster-vmstorage.yaml'
-  - src: 'telemetry/victoria/victoria-cluster-vminsert.yaml.j2'
-    dest: 'victoria-cluster-vminsert.yaml'
-  - src: 'telemetry/victoria/victoria-cluster-vmselect.yaml.j2'
-    dest: 'victoria-cluster-vmselect.yaml'
+  - src: 'telemetry/victoria/victoria-agent-deployment.yaml.j2'
+    dest: 'victoria-agent-deployment.yaml'
 
 # Test job template (optional)
 victoria_templates_test:
@@ -227,8 +331,21 @@ victoria_templates_test:
 # Note: victoria_templates_test is commented out by default in kustomization.yaml.j2
 victoria_templates: >
   {{ victoria_templates_common +
-     (victoria_templates_cluster if victoria_cluster.enabled else victoria_templates_single) +
+     (victoria_templates_operator_cluster if victoria_cluster.enabled else victoria_templates_operator_single) +
      victoria_templates_test }}
+
+# ============================================================================
+# VictoriaLogs Template Lists
+# ============================================================================
+# VictoriaLogs operator CR templates (used when 'victoria' in telemetry_collection_type)
+# These are applied alongside VictoriaMetrics templates in the same kustomize deployment.
+victorialogs_templates:
+  - src: 'telemetry/victoria/victorialogs-operator-vlcluster.yaml.j2'
+    dest: 'victorialogs-operator-vlcluster.yaml'
+  - src: 'telemetry/victoria/victorialogs-operator-vlagent.yaml.j2'
+    dest: 'victorialogs-operator-vlagent.yaml'
+  - src: 'telemetry/victoria/victorialogs-vlagent-config.yaml.j2'
+    dest: 'victorialogs-vlagent-config.yaml'
 
 kafka_templates:
   - src: 'telemetry/kafka/kafka.kafka.yaml.j2'
@@ -278,3 +395,91 @@ ldms_pod_not_ready_msg: "WARNING: LDMS aggregator pod did not become ready withi
 ldms_store_pod_ready_msg: "LDMS store daemon pod restarted successfully and is ready"
 ldms_store_pod_not_ready_msg: "LDMS store daemon pod restart failed or not ready within timeout"
 ldms_store_restart_wait_seconds: 10
+
+# ============================================================================
+# PowerScale Telemetry Configuration
+# ============================================================================
+# Usage: deploy_powerscale_metrics.yml
+# PowerScale telemetry is deployed via Helm chart (karavi-observability).
+# The Helm chart deploys CSM Metrics PowerScale, OTEL Collector, and all
+# associated Kubernetes resources. No per-cluster Kustomize manifests needed.
+# PowerScale metrics are scraped by the existing shared vmagent.
+
+# Karavi Observability offline installer variables
+# All files are on the NFS share at {{ k8s_client_mount_path }}/karavi-observability/
+karavi_observability_git: "karavi-observability.tar.gz"
+karavi_helm_charts_git: "helm-charts.tar.gz"
+karavi_helm_chart_path: "{{ k8s_client_mount_path }}/karavi-observability/helm-charts/charts/karavi-observability"
+permission_644: "0644"
+
+# Internal namespace constants (not user-configurable)
+csm_namespace: "telemetry"
+
+# CSM Metrics PowerScale resource limits
+csm_metrics_powerscale_resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Usage: deploy_powerscale_metrics.yml - messages
+ps_csi_driver_not_configured_msg: >-
+  PowerScale telemetry requires csi_driver_powerscale to be configured in software_config.json.
+  Please add csi_driver_powerscale to software_config.json and re-run.
+ps_helm_values_path_missing_msg: >-
+  csm_observability_values_file_path is required in telemetry_config.yml when powerscale_configurations.powerscale_telemetry_support is true.
+  Provide the path to your customized karavi-observability Helm values file.
+ps_helm_values_file_not_found_msg: >-
+  Helm values file not found at '{{ ps_helm_values_file | default('') }}'.
+  Please create a values file following the Dell CSM Observability documentation
+  and set the path in telemetry_config.yml (csm_observability_values_file_path).
+ps_helm_values_parse_fail_msg: >-
+  Failed to parse Helm values file at '{{ ps_helm_values_file | default('') }}'.
+  Please verify the file contains valid YAML.
+ps_cert_manager_disabled_msg: >-
+  cert-manager must be enabled in the CSM Observability Helm values file.
+  Set 'cert-manager.enabled: true' in {{ ps_helm_values_file | default('') }}.
+  cert-manager is required for automatic TLS certificate management (otel-collector-tls secret).
+ps_auth_mode_direct_msg: "PowerScale telemetry authentication mode: Direct Authentication (Mode A)"
+ps_auth_mode_karavi_msg: "PowerScale telemetry authentication mode: Karavi Authorization (Mode B)"
+ps_csi_secret_read_fail_msg: >-
+  Failed to load CSI PowerScale driver secret from '{{ ps_csi_secret_path | default('') }}'.
+  Please verify the file exists and contains valid isilonClusters configuration.
+ps_no_clusters_found_msg: >-
+  No PowerScale clusters found in CSI driver secret.yaml.
+  Please define at least one cluster in isilonClusters.
+ps_clusters_found_msg: >-
+  Found {{ ps_clusters | default([]) | length }} PowerScale cluster(s) for telemetry deployment.
+ps_telemetry_prepared_msg: >-
+  PowerScale telemetry files prepared on NFS share.
+  Helm chart: {{ karavi_helm_chart_path }}
+  Values file: {{ k8s_client_mount_path }}/karavi-observability/csm_metrics_values.yaml
+  Deployment will occur during cloud-init (PXE boot) on the control plane node.
+ps_cert_manager_pkg_msg: >-
+  cert-manager package from service_k8s.json: {{ cert_manager_package | default('') }} ({{ cert_manager_chart_tgz | default('') }})
+ps_cert_manager_required_msg: "cert-manager dependency download: REQUIRED"
+ps_cert_manager_skipped_msg: "cert-manager dependency download: SKIPPED (disabled in values file)"
+ps_cert_manager_staged_msg: >-
+  cert-manager ({{ cert_manager_package | default('') }}) extracted to
+  {{ karavi_helm_chart_path }}/charts/cert-manager/.
+  Helm will resolve this dependency during install on the control plane node.
+ps_cert_manager_skipped_detail_msg: >-
+  cert-manager dependency skipped (disabled in values file).
+  CRDs are bundled in karavi-observability chart and will be applied automatically.
+ps_cert_manager_extract_fail_msg: >-
+  cert-manager chart was not extracted correctly to
+  {{ karavi_helm_chart_path }}/charts/cert-manager/.
+  The archive {{ cert_manager_chart_tgz | default('') }} may be corrupt.
+ps_cert_manager_missing_msg: >-
+  cert-manager Helm chart ({{ cert_manager_chart_tgz | default('') }}) was not found in
+  {{ karavi_helm_chart_path }}/charts/. This chart is required for TLS certificate
+  management. Ensure the Jetstack cert-manager entry exists in service_k8s.json
+  and run local_repo.yml to download it to Pulp.
+ps_dependency_fail_msg: >-
+  Failed to get karavi-observability dependencies from Pulp.
+  Ensure the following entries exist in service_k8s.json and run local_repo.yml:
+    - karavi-observability (git)
+    - helm-charts (git)
+    - {{ cert_manager_package | default('cert-manager') }} (tarball from Jetstack Helm repo)
