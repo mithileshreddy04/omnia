@@ -1,0 +1,67 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+- name: Upgrade OpenCHAMI containers
+  block:
+    - name: Pull new OpenCHAMI container images
+      ansible.builtin.command: podman pull {{ item.image }}
+      loop: "{{ openchami_target_images }}"
+      register: pull_result
+      retries: 3
+      delay: 10
+      until: pull_result.rc == 0
+      changed_when: true
+
+    - name: Stop OpenCHAMI services
+      ansible.builtin.systemd:
+        name: openchami.target
+        state: stopped
+
+    - name: Remove old OpenCHAMI containers (preserve volumes)
+      ansible.builtin.command: podman rm {{ item.container }}
+      loop: "{{ openchami_containers }}"
+      register: remove_result
+      changed_when: true
+      failed_when: false
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Start OpenCHAMI services with new images
+      ansible.builtin.systemd:
+        name: openchami.target
+        state: started
+        enabled: true
+
+    - name: Wait for services to stabilize
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Verify all containers are running
+      ansible.builtin.command: podman ps --filter "name={{ item }}" --format "{{.Names}}"
+      loop: "{{ openchami_critical_containers }}"
+      register: verify_running
+      changed_when: false
+      failed_when: verify_running.stdout | length == 0
+
+    - name: Display container upgrade success
+      ansible.builtin.debug:
+        msg: "{{ upgrade_messages.container_upgrade.success }}"
+
+  rescue:
+    - name: Container upgrade failed
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.container_upgrade.failure }} {{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}"

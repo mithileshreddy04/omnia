@@ -1,0 +1,64 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+- name: Acquire OpenCHAMI upgrade lock
+  when: lock_action == 'acquire'
+  block:
+    - name: Check if upgrade lock exists
+      ansible.builtin.stat:
+        path: "{{ openchami_upgrade_lock_path }}"
+      register: lock_status
+
+    - name: Fail if lock exists and force_unlock not set
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.lock.exists }}"
+      when:
+        - lock_status.stat.exists
+        - not (force_unlock | default(false) | bool)
+
+    - name: Create upgrade lock directory
+      ansible.builtin.file:
+        path: "{{ openchami_upgrade_lock_path | dirname }}"
+        state: directory
+        mode: "{{ dir_permissions_755 }}"
+
+    - name: Create upgrade lock file
+      ansible.builtin.copy:
+        content: |
+          {
+            "timestamp": "{{ ansible_date_time.iso8601 }}",
+            "user": "{{ ansible_user_id }}",
+            "pid": "{{ ansible_pid }}",
+            "hostname": "{{ ansible_hostname }}",
+            "component": "openchami"
+          }
+        dest: "{{ openchami_upgrade_lock_path }}"
+        mode: "{{ file_permissions_644 }}"
+
+    - name: Display lock acquisition message
+      ansible.builtin.debug:
+        msg: "{{ upgrade_messages.lock.acquired }}"
+
+- name: Release OpenCHAMI upgrade lock
+  when: lock_action == 'cleanup'
+  block:
+    - name: Remove upgrade lock file
+      ansible.builtin.file:
+        path: "{{ openchami_upgrade_lock_path }}"
+        state: absent
+
+    - name: Display lock release message
+      ansible.builtin.debug:
+        msg: "{{ upgrade_messages.lock.released }}"

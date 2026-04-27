@@ -16,3 +16,8 @@
 - name: Include import input parameters
   ansible.builtin.include_role:
     name: import_input_parameters
+
+- name: Upgrade OpenCHAMI containers and services
+  ansible.builtin.include_role:
+    name: upgrade_openchami
+  when: openchami_installed | default(true) | bool

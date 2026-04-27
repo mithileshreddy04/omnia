@@ -1,0 +1,79 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+- name: Post-upgrade health check
+  block:
+    - name: Wait for service initialization
+      ansible.builtin.pause:
+        seconds: 60
+
+    - name: Test BSS endpoint availability
+      ansible.builtin.uri:
+        url: "{{ openchami_bss_endpoint }}"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401]
+      register: bss_post_check
+      failed_when: bss_post_check.status not in [200, 401]
+
+    - name: Test SMD endpoint availability
+      ansible.builtin.uri:
+        url: "{{ openchami_smd_endpoint }}"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401]
+      register: smd_post_check
+      failed_when: smd_post_check.status not in [200, 401]
+
+    - name: Capture post-upgrade node count from SMD
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -k -s {{ openchami_smd_endpoint }} | jq '.Components | length' || echo "0"
+      register: post_upgrade_node_count
+      changed_when: false
+
+    - name: Verify node count matches baseline
+      ansible.builtin.assert:
+        that:
+          - post_upgrade_node_count.stdout | int == pre_upgrade_node_count.stdout | int
+        fail_msg: "{{ upgrade_messages.health_check.node_count_mismatch }}"
+        success_msg: "{{ upgrade_messages.health_check.node_count_match }}"
+
+    - name: Test MinIO S3 access
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec minio-server mc ls local/
+      register: minio_post_check
+      changed_when: false
+      failed_when: minio_post_check.rc != 0
+
+    - name: Verify container image versions
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman inspect {{ item.container }} --format '{{{{.Image}}}}' | \
+        podman inspect --format '{{{{index .RepoTags 0}}}}' -
+      loop: "{{ openchami_containers }}"
+      register: version_check
+      changed_when: false
+      failed_when: version_check.stdout != item.expected_image
+
+    - name: Display post-upgrade health check success
+      ansible.builtin.debug:
+        msg: "{{ upgrade_messages.health_check.post_check_success }}"
+
+  rescue:
+    - name: Post-upgrade health check failed
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.health_check.post_check_failure }}\n{{ upgrade_messages.troubleshooting.post_check_diagnosis }}"

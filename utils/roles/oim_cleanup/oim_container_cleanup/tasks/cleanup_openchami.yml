@@ -100,3 +100,35 @@
   changed_when: false
   loop: "{{ openchami_services }}"
   failed_when: false
+
+- name: Version-aware OpenCHAMI cleanup for rollback
+  when: target_version is defined
+  block:
+    - name: Display cleanup version
+      ansible.builtin.debug:
+        msg: "Cleaning up OpenCHAMI version: {{ target_version }}"
+
+    - name: Stop OpenCHAMI services for rollback
+      ansible.builtin.systemd:
+        name: openchami.target
+        state: stopped
+      failed_when: false
+
+    - name: Remove OpenCHAMI containers for rollback
+      ansible.builtin.command: podman rm -f {{ item }}
+      loop: "{{ openchami_containers }}"
+      register: remove_containers
+      changed_when: true
+      failed_when: false
+
+    - name: Remove OpenCHAMI volumes (if preserve_data is false)
+      ansible.builtin.command: podman volume rm {{ item }}
+      loop: "{{ openchami_volumes }}"
+      when: not (preserve_data | default(true) | bool)
+      register: remove_volumes
+      changed_when: true
+      failed_when: false
+
+    - name: Display cleanup completion
+      ansible.builtin.debug:
+        msg: "OpenCHAMI {{ target_version }} cleanup completed. Data preserved: {{ preserve_data | default(true) }}"
