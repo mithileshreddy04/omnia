@@ -33,6 +33,8 @@
         status_code: [200, 401]
       register: bss_pre_check
       failed_when: bss_pre_check.status not in [200, 401]
+      delegate_to: oim
+      connection: ssh
 
     - name: Test SMD endpoint availability
       ansible.builtin.uri:
@@ -42,6 +44,8 @@
         status_code: [200, 401]
       register: smd_pre_check
       failed_when: smd_pre_check.status not in [200, 401]
+      delegate_to: oim
+      connection: ssh
 
     - name: Capture baseline node count from SMD
       ansible.builtin.shell: |

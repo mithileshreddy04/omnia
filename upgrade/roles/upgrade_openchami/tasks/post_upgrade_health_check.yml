@@ -27,6 +27,8 @@
         status_code: [200, 401]
       register: bss_post_check
       failed_when: bss_post_check.status not in [200, 401]
+      delegate_to: oim
+      connection: ssh
 
     - name: Test SMD endpoint availability
       ansible.builtin.uri:
@@ -36,6 +38,8 @@
         status_code: [200, 401]
       register: smd_post_check
       failed_when: smd_post_check.status not in [200, 401]
+      delegate_to: oim
+      connection: ssh
 
     - name: Capture post-upgrade node count from SMD
       ansible.builtin.shell: |
