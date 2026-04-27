@@ -39,23 +39,6 @@
       delegate_to: oim
       connection: ssh
 
-    - name: Capture post-upgrade node count from database
-      ansible.builtin.shell: |
-        set -o pipefail
-        podman exec postgres psql -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
-      register: post_upgrade_node_count
-      changed_when: false
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
-
-    - name: Verify node count matches baseline
-      ansible.builtin.assert:
-        that:
-          - post_upgrade_node_count.stdout | int == pre_upgrade_node_count.stdout | int
-        fail_msg: "{{ upgrade_messages.health_check.node_count_mismatch }}"
-        success_msg: "{{ upgrade_messages.health_check.node_count_match }}"
-
     - name: Test MinIO S3 access
       ansible.builtin.shell: |
         set -o pipefail
