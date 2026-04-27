@@ -37,7 +37,7 @@
     - name: Capture SMD inventory snapshot
       ansible.builtin.shell: |
         set -o pipefail
-        curl -k -s {{ openchami_smd_endpoint }} > {{ openchami_snapshot_dir }}/smd_inventory.json
+        curl -k -s https://127.0.0.1:8443/hsm/v2/State/Components > {{ openchami_snapshot_dir }}/smd_inventory.json
       register: smd_snapshot
       changed_when: true
       delegate_to: oim
