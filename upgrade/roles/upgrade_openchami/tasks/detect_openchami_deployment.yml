@@ -18,7 +18,7 @@
     msg: "admin_nic_ip for delegation: {{ admin_nic_ip | default('UNDEFINED') }}"
 
 - name: Check if podman is installed
-  ansible.builtin.command: which podman
+  ansible.builtin.shell: command -v podman
   register: podman_check
   changed_when: false
   failed_when: false
