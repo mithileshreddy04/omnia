@@ -13,7 +13,11 @@
 # limitations under the License.
 ---
 
+- name: Detect if OpenCHAMI was previously deployed
+  ansible.builtin.include_tasks: detect_openchami_deployment.yml
+
 - name: OpenCHAMI upgrade workflow
+  when: openchami_deployed | default(false) | bool
   block:
     - name: Acquire OpenCHAMI upgrade lock
       ansible.builtin.include_tasks: manage_upgrade_lock.yml
@@ -48,3 +52,8 @@
       ansible.builtin.include_tasks: manage_upgrade_lock.yml
       vars:
         lock_action: cleanup
+
+- name: Display OpenCHAMI not deployed message
+  ansible.builtin.debug:
+    msg: "{{ upgrade_messages.deployment.not_deployed }}"
+  when: not (openchami_deployed | default(false) | bool)

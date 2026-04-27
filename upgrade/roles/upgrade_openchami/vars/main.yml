@@ -104,6 +104,11 @@ openchami_volumes:
 
 # Upgrade messages
 upgrade_messages:
+  deployment:
+    not_deployed: |
+      OpenCHAMI was not previously deployed. Skipping OpenCHAMI upgrade.
+      If you want to deploy OpenCHAMI, run: ansible-playbook prepare_oim/prepare_oim.yml
+    deployed: "OpenCHAMI deployment detected. Proceeding with upgrade checks."
   lock:
     acquired: "OpenCHAMI upgrade lock acquired successfully"
     released: "OpenCHAMI upgrade lock released successfully"
