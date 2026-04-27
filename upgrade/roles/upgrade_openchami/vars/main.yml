@@ -56,7 +56,7 @@ openchami_target_images:
   - image: "cgr.dev/chainguard/haproxy:latest"
     container: "haproxy"
   - image: "docker.io/pgsty/minio:RELEASE.2026-04-17T00-00-00Z"
-    container: "minio-server"
+    container: "minio"
   - image: "docker.io/library/registry:3.1.0"
     container: "registry"
   - image: "cgr.dev/chainguard/curl:latest"
