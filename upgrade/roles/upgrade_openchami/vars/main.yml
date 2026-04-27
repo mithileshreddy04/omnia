@@ -26,9 +26,6 @@ openchami_snapshot_dir: "{{ openchami_snapshot_base_dir }}/{{ ansible_date_time.
 openchami_bss_endpoint: "https://{{ admin_nic_ip }}:8443/boot/v1/bootscript"
 openchami_smd_endpoint: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
 
-# PostgreSQL access
-openchami_postgres_user: postgres
-
 # OpenCHAMI critical containers (must be running for health checks)
 openchami_critical_containers:
   - smd
