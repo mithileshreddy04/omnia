@@ -25,6 +25,7 @@
       delegate_to: oim
       delegate_facts: true
       connection: ssh
+      failed_when: false
 
     - name: Update coresmd-coredhcp quadlet image (if exists)
       ansible.builtin.lineinfile:
@@ -70,7 +71,7 @@
       connection: ssh
       failed_when: false
 
-    - name: Update minio quadlet image (not minio-server)
+    - name: Update minio quadlet image
       ansible.builtin.lineinfile:
         path: "/etc/containers/systemd/minio.container"
         regexp: '^Image=.*'
@@ -86,6 +87,28 @@
         path: "/etc/containers/systemd/registry.container"
         regexp: '^Image=.*'
         line: "Image=docker.io/library/registry:{{ registry_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update acme-register quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/acme-register.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/neilpang/acme.sh:{{ acme_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update acme-deploy quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/acme-deploy.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/neilpang/acme.sh:{{ acme_tag }}"
         state: present
       delegate_to: oim
       delegate_facts: true
