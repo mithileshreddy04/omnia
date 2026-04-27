@@ -21,6 +21,8 @@
       register: container_check
       changed_when: false
       failed_when: container_check.stdout | length == 0
+      delegate_to: "{{ admin_nic_ip }}"
+      delegate_facts: true
 
     - name: Test BSS endpoint availability
       ansible.builtin.uri:
@@ -46,6 +48,8 @@
         curl -k -s {{ openchami_smd_endpoint }} | jq '.Components | length' || echo "0"
       register: pre_upgrade_node_count
       changed_when: false
+      delegate_to: "{{ admin_nic_ip }}"
+      delegate_facts: true
 
     - name: Display pre-upgrade health check success
       ansible.builtin.debug:

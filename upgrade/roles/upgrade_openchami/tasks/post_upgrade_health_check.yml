@@ -43,6 +43,8 @@
         curl -k -s {{ openchami_smd_endpoint }} | jq '.Components | length' || echo "0"
       register: post_upgrade_node_count
       changed_when: false
+      delegate_to: "{{ admin_nic_ip }}"
+      delegate_facts: true
 
     - name: Verify node count matches baseline
       ansible.builtin.assert:
@@ -58,6 +60,8 @@
       register: minio_post_check
       changed_when: false
       failed_when: minio_post_check.rc != 0
+      delegate_to: "{{ admin_nic_ip }}"
+      delegate_facts: true
 
     - name: Verify container image versions
       ansible.builtin.shell: |
@@ -68,6 +72,8 @@
       register: version_check
       changed_when: false
       failed_when: version_check.stdout != item.expected_image
+      delegate_to: "{{ admin_nic_ip }}"
+      delegate_facts: true
 
     - name: Display post-upgrade health check success
       ansible.builtin.debug:

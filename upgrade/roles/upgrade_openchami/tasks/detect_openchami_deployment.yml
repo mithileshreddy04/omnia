@@ -18,6 +18,8 @@
   register: podman_check
   changed_when: false
   failed_when: false
+  delegate_to: "{{ admin_nic_ip }}"
+  delegate_facts: true
 
 - name: Set podman availability fact
   ansible.builtin.set_fact:
@@ -32,12 +34,8 @@
   changed_when: false
   failed_when: false
   when: podman_available | bool
-
-- name: Debug individual container results
-  ansible.builtin.debug:
-    msg: "Container {{ item.item }}: stdout='{{ item.stdout }}' rc={{ item.rc }}"
-  loop: "{{ openchami_containers_check.results | default([]) }}"
-  when: podman_available | bool
+  delegate_to: "{{ admin_nic_ip }}"
+  delegate_facts: true
 
 - name: Count running OpenCHAMI containers
   ansible.builtin.set_fact:
