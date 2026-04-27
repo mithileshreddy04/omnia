@@ -42,8 +42,7 @@
     - name: Verify container image versions
       ansible.builtin.shell: |
         set -o pipefail
-        podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}' | \
-        podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' -
+        podman inspect {{ item.container }} --format '{% raw %}{{index .RepoTags 0}}{% endraw %}'
       loop: "{{ openchami_containers }}"
       register: version_check
       changed_when: false
