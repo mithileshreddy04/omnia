@@ -28,7 +28,7 @@
     - name: Check postgres database connectivity
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres pg_isready -U hmsdsuser
+        podman exec postgres pg_isready -U {{ openchami_postgres_user }}
       register: postgres_check
       changed_when: false
       failed_when: postgres_check.rc != 0
@@ -38,7 +38,7 @@
     - name: Capture baseline node count from database
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres psql -U hmsdsuser -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+        podman exec postgres psql -U {{ openchami_postgres_user }} -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
       register: pre_upgrade_node_count
       changed_when: false
       delegate_to: oim
