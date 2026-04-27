@@ -16,7 +16,7 @@
 - name: Pre-upgrade health check
   block:
     - name: Verify all OpenCHAMI containers are running
-      ansible.builtin.command: podman ps --filter "name={{ item }}" --format "{{.Names}}"
+      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
       loop: "{{ openchami_critical_containers }}"
       register: container_check
       changed_when: false
