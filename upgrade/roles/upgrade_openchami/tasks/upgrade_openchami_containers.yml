@@ -23,15 +23,17 @@
       delay: 10
       until: pull_result.rc == 0
       changed_when: true
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Stop OpenCHAMI services
       ansible.builtin.systemd:
         name: openchami.target
         state: stopped
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Remove old OpenCHAMI containers (preserve volumes)
       ansible.builtin.command: podman rm {{ item.container }}
@@ -39,22 +41,25 @@
       register: remove_result
       changed_when: true
       failed_when: false
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Reload systemd daemon
       ansible.builtin.systemd:
         daemon_reload: true
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Start OpenCHAMI services with new images
       ansible.builtin.systemd:
         name: openchami.target
         state: started
         enabled: true
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Wait for services to stabilize
       ansible.builtin.pause:
@@ -66,8 +71,9 @@
       register: verify_running
       changed_when: false
       failed_when: verify_running.stdout | length == 0
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Display container upgrade success
       ansible.builtin.debug:

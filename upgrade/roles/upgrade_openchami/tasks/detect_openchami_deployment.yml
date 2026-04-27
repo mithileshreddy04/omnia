@@ -13,17 +13,14 @@
 # limitations under the License.
 ---
 
-- name: Debug admin_nic_ip before podman check
-  ansible.builtin.debug:
-    msg: "admin_nic_ip for delegation: {{ admin_nic_ip | default('UNDEFINED') }}"
-
 - name: Check if podman is installed
-  ansible.builtin.shell: command -v podman
+  ansible.builtin.command: command -v podman
   register: podman_check
   changed_when: false
   failed_when: false
-  delegate_to: "{{ admin_nic_ip }}"
+  delegate_to: oim
   delegate_facts: true
+  connection: ssh
 
 - name: Debug podman check result
   ansible.builtin.debug:
@@ -46,8 +43,9 @@
   changed_when: false
   failed_when: false
   when: podman_available | bool
-  delegate_to: "{{ admin_nic_ip }}"
+  delegate_to: oim
   delegate_facts: true
+  connection: ssh
 
 - name: Debug individual container results
   ansible.builtin.debug:

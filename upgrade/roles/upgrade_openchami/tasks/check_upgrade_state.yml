@@ -24,8 +24,9 @@
       register: current_images
       changed_when: false
       failed_when: false
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Determine if upgrade is needed
       ansible.builtin.set_fact:

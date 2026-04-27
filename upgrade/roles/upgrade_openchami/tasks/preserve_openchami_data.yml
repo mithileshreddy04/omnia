@@ -20,8 +20,9 @@
         path: "{{ openchami_snapshot_dir }}"
         state: directory
         mode: "{{ dir_permissions_755 }}"
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Dump PostgreSQL database
       ansible.builtin.shell: |
@@ -29,8 +30,9 @@
         podman exec postgres pg_dump -U hmsdsuser hmsds > {{ openchami_snapshot_dir }}/postgres_dump.sql
       register: pg_dump
       changed_when: true
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Capture SMD inventory snapshot
       ansible.builtin.shell: |
@@ -38,8 +40,9 @@
         curl -k -s {{ openchami_smd_endpoint }} > {{ openchami_snapshot_dir }}/smd_inventory.json
       register: smd_snapshot
       changed_when: true
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: List MinIO buckets
       ansible.builtin.shell: |
@@ -48,8 +51,9 @@
       register: minio_list
       changed_when: true
       failed_when: false
-      delegate_to: "{{ admin_nic_ip }}"
+      delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Display data preservation success
       ansible.builtin.debug:
