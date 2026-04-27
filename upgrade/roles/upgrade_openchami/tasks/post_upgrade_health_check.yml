@@ -19,15 +19,9 @@
       ansible.builtin.pause:
         seconds: 60
 
-    - name: Get admin_nic_ip from hostvars
-      ansible.builtin.set_fact:
-        openchami_endpoint_ip: "{{ hostvars['localhost']['admin_nic_ip'] | default(ansible_default_ipv4.address) }}"
-      delegate_to: oim
-      delegate_facts: true
-
     - name: Test BSS endpoint availability
       ansible.builtin.uri:
-        url: "https://{{ openchami_endpoint_ip }}:8443/boot/v1/bootscript"
+        url: "https://{{ admin_nic_ip }}:8443/boot/v1/bootscript"
         method: GET
         validate_certs: false
         status_code: [200, 401]
@@ -39,7 +33,7 @@
 
     - name: Test SMD endpoint availability
       ansible.builtin.uri:
-        url: "https://{{ openchami_endpoint_ip }}:8443/hsm/v2/State/Components"
+        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
         method: GET
         validate_certs: false
         status_code: [200, 401]
@@ -51,7 +45,7 @@
 
     - name: Capture post-upgrade node count from SMD
       ansible.builtin.uri:
-        url: "https://{{ openchami_endpoint_ip }}:8443/hsm/v2/State/Components"
+        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
         method: GET
         validate_certs: false
         return_content: true

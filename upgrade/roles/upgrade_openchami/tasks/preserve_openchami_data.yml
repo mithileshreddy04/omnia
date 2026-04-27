@@ -34,15 +34,9 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Get admin_nic_ip from hostvars
-      ansible.builtin.set_fact:
-        openchami_endpoint_ip: "{{ hostvars['localhost']['admin_nic_ip'] | default(ansible_default_ipv4.address) }}"
-      delegate_to: oim
-      delegate_facts: true
-
     - name: Capture SMD inventory snapshot
       ansible.builtin.uri:
-        url: "https://{{ openchami_endpoint_ip }}:8443/hsm/v2/State/Components"
+        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
         method: GET
         validate_certs: false
         return_content: true
