@@ -34,13 +34,18 @@
         state: directory
         mode: "{{ dir_permissions_755 }}"
 
+    - name: Get current process ID
+      ansible.builtin.command: echo $$
+      register: current_pid
+      changed_when: false
+
     - name: Create upgrade lock file
       ansible.builtin.copy:
         content: |
           {
             "timestamp": "{{ ansible_date_time.iso8601 }}",
             "user": "{{ ansible_user_id }}",
-            "pid": "{{ ansible_pid }}",
+            "pid": "{{ current_pid.stdout }}",
             "hostname": "{{ ansible_hostname }}",
             "component": "openchami"
           }

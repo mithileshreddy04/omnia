@@ -108,7 +108,7 @@ upgrade_messages:
     acquired: "OpenCHAMI upgrade lock acquired successfully"
     released: "OpenCHAMI upgrade lock released successfully"
     exists: |
-      OpenCHAMI upgrade lock already exists at {{ openchami_upgrade_lock_path }}.
+      OpenCHAMI upgrade lock already exists at {{ openchami_upgrade_lock_path | default('/opt/omnia/.data/openchami_upgrade_in_progress.lock') }}.
       Another upgrade may be in progress.
       To force unlock, run with: -e force_unlock=true
   idempotency:
@@ -126,14 +126,14 @@ upgrade_messages:
     node_count_match: "Node count verification passed. SMD inventory intact after upgrade."
     node_count_mismatch: |
       Node count mismatch detected!
-      Pre-upgrade: {{ pre_upgrade_node_count.stdout }}
-      Post-upgrade: {{ post_upgrade_node_count.stdout }}
+      Pre-upgrade: {{ pre_upgrade_node_count.stdout | default('N/A') }}
+      Post-upgrade: {{ post_upgrade_node_count.stdout | default('N/A') }}
       SMD inventory may be corrupted. Check logs and consider rollback.
   data_preservation:
-    success: "OpenCHAMI data preserved successfully in {{ openchami_snapshot_dir }}"
+    success: "OpenCHAMI data preserved successfully in {{ openchami_snapshot_dir | default('N/A') }}"
     failure: |
       Failed to preserve OpenCHAMI data.
-      Snapshot directory: {{ openchami_snapshot_dir }}
+      Snapshot directory: {{ openchami_snapshot_dir | default('N/A') }}
       Upgrade aborted to prevent data loss.
   container_upgrade:
     success: "OpenCHAMI containers upgraded successfully to target versions"
@@ -143,7 +143,7 @@ upgrade_messages:
       Please resolve issues before retrying upgrade:
       - Check container status: podman ps -a
       - Check container logs: podman logs <container_name>
-      - Verify network connectivity: curl -k https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components
+      - Verify network connectivity: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
       - Check systemd status: systemctl status openchami.target
     container_upgrade_diagnosis: |
       Check container logs for errors:
@@ -156,5 +156,5 @@ upgrade_messages:
       Review the following:
       - Container logs: podman logs <container_name>
       - Service status: systemctl status openchami.target
-      - API endpoints: curl -k https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components
+      - API endpoints: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
       - Rollback documentation: upgrade/docs/OPENCHAMI_ROLLBACK.md
