@@ -26,34 +26,46 @@
       connection: ssh
 
     - name: Test BSS endpoint availability
-      ansible.builtin.shell: |
-        set -o pipefail
-        podman exec haproxy curl -k -s -o /dev/null -w "%{http_code}" http://localhost:8443/boot/v1/bootscript
+      ansible.builtin.uri:
+        url: "https://{{ ansible_default_ipv4.address }}:8443/boot/v1/bootscript"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401]
+        timeout: 10
       register: bss_pre_check
-      changed_when: false
-      failed_when: bss_pre_check.stdout not in ["200", "401"]
+      failed_when: bss_pre_check.status not in [200, 401]
       delegate_to: oim
       connection: ssh
 
     - name: Test SMD endpoint availability
-      ansible.builtin.shell: |
-        set -o pipefail
-        podman exec haproxy curl -k -s -o /dev/null -w "%{http_code}" http://localhost:8443/hsm/v2/State/Components
+      ansible.builtin.uri:
+        url: "https://{{ ansible_default_ipv4.address }}:8443/hsm/v2/State/Components"
+        method: GET
+        validate_certs: false
+        status_code: [200, 401]
+        timeout: 10
       register: smd_pre_check
-      changed_when: false
-      failed_when: smd_pre_check.stdout not in ["200", "401"]
+      failed_when: smd_pre_check.status not in [200, 401]
       delegate_to: oim
       connection: ssh
 
     - name: Capture baseline node count from SMD
-      ansible.builtin.shell: |
-        set -o pipefail
-        podman exec haproxy curl -k -s http://localhost:8443/hsm/v2/State/Components | jq '.Components | length' || echo "0"
-      register: pre_upgrade_node_count
-      changed_when: false
+      ansible.builtin.uri:
+        url: "https://{{ ansible_default_ipv4.address }}:8443/hsm/v2/State/Components"
+        method: GET
+        validate_certs: false
+        return_content: true
+        status_code: [200, 401]
+        timeout: 10
+      register: smd_components_pre
+      delegate_to: oim
+      connection: ssh
+
+    - name: Parse node count from SMD response
+      ansible.builtin.set_fact:
+        pre_upgrade_node_count: "{{ (smd_components_pre.json.Components | default([])) | length }}"
       delegate_to: oim
       delegate_facts: true
-      connection: ssh
 
     - name: Display pre-upgrade health check success
       ansible.builtin.debug:

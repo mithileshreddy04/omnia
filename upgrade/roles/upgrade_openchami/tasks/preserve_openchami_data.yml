@@ -35,13 +35,15 @@
       connection: ssh
 
     - name: Capture SMD inventory snapshot
-      ansible.builtin.shell: |
-        set -o pipefail
-        podman exec haproxy curl -k -s http://localhost:8443/hsm/v2/State/Components > {{ openchami_snapshot_dir }}/smd_inventory.json
+      ansible.builtin.uri:
+        url: "https://{{ ansible_default_ipv4.address }}:8443/hsm/v2/State/Components"
+        method: GET
+        validate_certs: false
+        return_content: true
+        dest: "{{ openchami_snapshot_dir }}/smd_inventory.json"
+        timeout: 30
       register: smd_snapshot
-      changed_when: true
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
     - name: List MinIO buckets
