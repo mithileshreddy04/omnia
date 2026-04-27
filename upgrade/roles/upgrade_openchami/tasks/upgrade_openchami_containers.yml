@@ -30,6 +30,9 @@
     - name: Update systemd quadlet files
       ansible.builtin.include_tasks: update_systemd_quadlets.yml
 
+    - name: Handle coresmd transition
+      ansible.builtin.include_tasks: handle_coresmd_transition.yml
+
     - name: Stop OpenCHAMI services
       ansible.builtin.systemd:
         name: openchami.target
