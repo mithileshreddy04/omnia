@@ -13,6 +13,10 @@
 # limitations under the License.
 ---
 
+- name: Debug admin_nic_ip before podman check
+  ansible.builtin.debug:
+    msg: "admin_nic_ip for delegation: {{ admin_nic_ip | default('UNDEFINED') }}"
+
 - name: Check if podman is installed
   ansible.builtin.command: which podman
   register: podman_check
@@ -21,9 +25,17 @@
   delegate_to: "{{ admin_nic_ip }}"
   delegate_facts: true
 
+- name: Debug podman check result
+  ansible.builtin.debug:
+    msg: "podman check rc: {{ podman_check.rc }}, stdout: '{{ podman_check.stdout }}', stderr: '{{ podman_check.stderr }}'"
+
 - name: Set podman availability fact
   ansible.builtin.set_fact:
     podman_available: "{{ podman_check.rc == 0 }}"
+
+- name: Debug podman availability
+  ansible.builtin.debug:
+    msg: "podman_available: {{ podman_available }}"
 
 - name: Check for running OpenCHAMI containers
   ansible.builtin.shell: |
@@ -37,6 +49,12 @@
   delegate_to: "{{ admin_nic_ip }}"
   delegate_facts: true
 
+- name: Debug individual container results
+  ansible.builtin.debug:
+    msg: "Container {{ item.item }}: rc={{ item.rc }}, stdout='{{ item.stdout }}', stderr='{{ item.stderr }}'"
+  loop: "{{ openchami_containers_check.results | default([]) }}"
+  when: podman_available | bool
+
 - name: Count running OpenCHAMI containers
   ansible.builtin.set_fact:
     running_containers_count: >-
@@ -47,6 +65,10 @@
         list | length
       }}
   when: podman_available | bool
+
+- name: Debug running containers count
+  ansible.builtin.debug:
+    msg: "running_containers_count: {{ running_containers_count | default(0) }}"
 
 - name: Determine if OpenCHAMI is deployed and running
   ansible.builtin.set_fact:

@@ -15,17 +15,45 @@
 
 - name: Load network configuration for OIM node IP
   block:
+    - name: Check if network_spec.yml file exists
+      ansible.builtin.stat:
+        path: "/opt/omnia/input/project_default/network_spec.yml"
+      register: network_spec_stat
+
+    - name: Debug network_spec.yml existence
+      ansible.builtin.debug:
+        msg: "network_spec.yml exists: {{ network_spec_stat.stat.exists }}, path: /opt/omnia/input/project_default/network_spec.yml"
+
     - name: Include network_spec.yml file
       ansible.builtin.include_vars:
         file: "/opt/omnia/input/project_default/network_spec.yml"
       register: include_network_spec
       failed_when: false
 
+    - name: Debug include_vars result
+      ansible.builtin.debug:
+        msg: "include_vars result: {{ include_network_spec }}"
+
+    - name: Debug Networks variable
+      ansible.builtin.debug:
+        msg: "Networks variable: {{ Networks }}"
+      when: Networks is defined
+
+    - name: Debug Networks not defined
+      ansible.builtin.debug:
+        msg: "Networks variable is not defined"
+      when: Networks is not defined
+
     - name: Parse network_spec data
       ansible.builtin.set_fact:
         network_data: "{{ network_data | default({}) | combine({item.key: item.value}) }}"
       with_dict: "{{ Networks }}"
       when: Networks is defined
+
+    - name: Debug network_data after parsing
+      ansible.builtin.debug:
+        msg: "network_data: {{ network_data }}"
+      when: network_data is defined
 
     - name: Set admin_nic_ip from network_spec
       ansible.builtin.set_fact:
@@ -40,10 +68,15 @@
         msg: "Delegating podman commands to OIM node at: {{ admin_nic_ip }}"
       when: admin_nic_ip is defined
 
+    - name: Debug why admin_nic_ip not set
+      ansible.builtin.debug:
+        msg: "admin_nic_ip not set. network_data defined: {{ network_data is defined }}, admin_network defined: {{ network_data.admin_network is defined if network_data is defined else false }}"
+      when: admin_nic_ip is not defined
+
   rescue:
     - name: Failed to load network configuration
       ansible.builtin.debug:
-        msg: "Warning: Could not load network_spec.yml. Using localhost for delegation."
+        msg: "Warning: Could not load network_spec.yml. Using localhost for delegation. Error: {{ include_network_spec.message | default('unknown') }}"
 
     - name: Fallback to localhost
       ansible.builtin.set_fact:
