@@ -27,6 +27,9 @@
       delegate_facts: true
       connection: ssh
 
+    - name: Update systemd quadlet files
+      ansible.builtin.include_tasks: update_systemd_quadlets.yml
+
     - name: Stop OpenCHAMI services
       ansible.builtin.systemd:
         name: openchami.target

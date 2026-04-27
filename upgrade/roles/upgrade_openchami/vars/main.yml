@@ -143,6 +143,9 @@ upgrade_messages:
   container_upgrade:
     success: "OpenCHAMI containers upgraded successfully to target versions"
     failure: "OpenCHAMI container upgrade failed."
+  quadlet_update:
+    success: "Systemd quadlet files updated with new image versions"
+    failure: "Failed to update systemd quadlet files with new image versions"
   troubleshooting:
     pre_check_diagnosis: |
       Please resolve issues before retrying upgrade:
@@ -156,10 +159,23 @@ upgrade_messages:
       - podman logs bss
       - podman logs cloud-init-server
       - systemctl status openchami.target
-      Rollback documentation: upgrade/docs/OPENCHAMI_ROLLBACK.md
     post_check_diagnosis: |
       Review the following:
       - Container logs: podman logs <container_name>
       - Service status: systemctl status openchami.target
       - API endpoints: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
-      - Rollback documentation: upgrade/docs/OPENCHAMI_ROLLBACK.md
+
+# OpenCHAMI component version tags (for quadlet updates)
+openchami_local_ca_tag: "v0.2.2"
+openchami_opaal_tag: "v0.3.10"
+openchami_smd_tag: "v2.19.0"
+openchami_bss_tag: "v1.32.1"
+openchami_cloud_init_tag: "v1.3.0"
+openchami_coresmd_tag: "v0.4.0"
+minio_release_tag: "RELEASE.2026-04-17T00-00-00Z"
+postgres_tag: "11.5-alpine"
+hydra_tag: "v2.3"
+haproxy_tag: "latest"
+registry_tag: "3.1.0"
+curl_tag: "latest"
+acme_tag: "3.1.1"
