@@ -26,7 +26,7 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Update coresmd-coredhcp quadlet image
+    - name: Update coresmd-coredhcp quadlet image (if exists)
       ansible.builtin.lineinfile:
         path: "/etc/containers/systemd/coresmd-coredhcp.container"
         regexp: '^Image=.*'
@@ -35,8 +35,9 @@
       delegate_to: oim
       delegate_facts: true
       connection: ssh
+      failed_when: false
 
-    - name: Update coresmd-coredns quadlet image
+    - name: Update coresmd-coredns quadlet image (if exists)
       ansible.builtin.lineinfile:
         path: "/etc/containers/systemd/coresmd-coredns.container"
         regexp: '^Image=.*'
@@ -45,6 +46,7 @@
       delegate_to: oim
       delegate_facts: true
       connection: ssh
+      failed_when: false
 
     - name: Update smd-init quadlet image
       ansible.builtin.lineinfile:
@@ -68,9 +70,9 @@
       connection: ssh
       failed_when: false
 
-    - name: Update minio-server quadlet image
+    - name: Update minio quadlet image (not minio-server)
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/minio-server.container"
+        path: "/etc/containers/systemd/minio.container"
         regexp: '^Image=.*'
         line: "Image=docker.io/pgsty/minio:{{ minio_release_tag }}"
         state: present
