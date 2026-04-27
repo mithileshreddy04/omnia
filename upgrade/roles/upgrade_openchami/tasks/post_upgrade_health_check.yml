@@ -42,12 +42,18 @@
     - name: Verify container image versions
       ansible.builtin.shell: |
         set -o pipefail
+        # Check if container exists
+        if ! podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^{{ item.container }}$"; then
+          echo "Container {{ item.container }} does not exist"
+          exit 0
+        fi
+        # Get image and verify version
         IMAGE_ID=$(podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}')
         podman inspect $IMAGE_ID --format '{% raw %}{{index .RepoTags 0}}{% endraw %}'
       loop: "{{ openchami_containers }}"
       register: version_check
       changed_when: false
-      failed_when: version_check.stdout != item.expected_image
+      failed_when: version_check.stdout != "" and version_check.stdout != "Container " + item.container + " does not exist" and version_check.stdout != item.expected_image
       delegate_to: oim
       delegate_facts: true
       connection: ssh

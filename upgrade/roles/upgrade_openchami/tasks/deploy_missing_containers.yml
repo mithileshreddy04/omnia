@@ -1,0 +1,122 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+- name: Deploy missing OpenCHAMI containers for 2.2
+  block:
+    - name: Check if coresmd-coredhcp service exists
+      ansible.builtin.shell: |
+        systemctl list-unit-files | grep -q "coresmd-coredhcp.service"
+      register: coredhcp_service_check
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Check if coresmd-coredns service exists
+      ansible.builtin.shell: |
+        systemctl list-unit-files | grep -q "coresmd-coredns.service"
+      register: coredns_service_check
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Create coresmd-coredhcp quadlet file if missing
+      ansible.builtin.template:
+        src: coresmd-coredhcp.container.j2
+        dest: /etc/containers/systemd/coresmd-coredhcp.container
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      when: coredhcp_service_check.rc != 0
+      notify:
+        - reload systemd
+        - restart coresmd-coredhcp
+
+    - name: Create coresmd-coredns quadlet file if missing
+      ansible.builtin.template:
+        src: coresmd-coredns.container.j2
+        dest: /etc/containers/systemd/coresmd-coredns.container
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      when: coredns_service_check.rc != 0
+      notify:
+        - reload systemd
+        - restart coresmd-coredns
+
+    - name: Enable and start coresmd-coredhcp service
+      ansible.builtin.systemd:
+        name: coresmd-coredhcp
+        state: started
+        enabled: true
+        daemon_reload: true
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      when: coredhcp_service_check.rc != 0
+
+    - name: Enable and start coresmd-coredns service
+      ansible.builtin.systemd:
+        name: coresmd-coredns
+        state: started
+        enabled: true
+        daemon_reload: true
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      when: coredns_service_check.rc != 0
+
+    - name: Display missing container deployment success
+      ansible.builtin.debug:
+        msg: "Successfully deployed missing OpenCHAMI 2.2 containers"
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      listen: reload systemd
+
+    - name: restart coresmd-coredhcp
+      ansible.builtin.systemd:
+        name: coresmd-coredhcp
+        state: restarted
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      listen: restart coresmd-coredhcp
+
+    - name: restart coresmd-coredns
+      ansible.builtin.systemd:
+        name: coresmd-coredns
+        state: restarted
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      listen: restart coresmd-coredns
+
+  rescue:
+    - name: Missing container deployment failed
+      ansible.builtin.debug:
+        msg: "Warning: Some containers could not be deployed. Manual intervention may be required."

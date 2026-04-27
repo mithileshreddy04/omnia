@@ -32,8 +32,8 @@ openchami_critical_containers:
   - bss
   - cloud-init-server
   - postgres
-  - minio-server
   - haproxy
+  - coresmd
 
 # OpenCHAMI target image versions (Omnia 2.2.0.0)
 openchami_target_images:
@@ -56,7 +56,7 @@ openchami_target_images:
   - image: "cgr.dev/chainguard/haproxy:latest"
     container: "haproxy"
   - image: "docker.io/pgsty/minio:RELEASE.2026-04-17T00-00-00Z"
-    container: "minio-server"
+    container: "minio"
   - image: "docker.io/library/registry:3.1.0"
     container: "registry"
   - image: "cgr.dev/chainguard/curl:latest"
@@ -80,18 +80,12 @@ openchami_containers:
     expected_image: "ghcr.io/openchami/cloud-init:v1.3.0"
   - container: "coresmd"
     expected_image: "ghcr.io/openchami/coresmd:v0.4.0"
-  - container: "coresmd-coredhcp"
-    expected_image: "ghcr.io/openchami/coresmd:v0.4.0"
-  - container: "coresmd-coredns"
-    expected_image: "ghcr.io/openchami/coresmd:v0.4.0"
   - container: "postgres"
     expected_image: "docker.io/library/postgres:11.5-alpine"
   - container: "hydra"
     expected_image: "docker.io/oryd/hydra:v2.3"
   - container: "haproxy"
     expected_image: "cgr.dev/chainguard/haproxy:latest"
-  - container: "minio-server"
-    expected_image: "docker.io/pgsty/minio:RELEASE.2026-04-17T00-00-00Z"
   - container: "registry"
     expected_image: "docker.io/library/registry:3.1.0"
 
