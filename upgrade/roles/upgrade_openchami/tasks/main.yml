@@ -13,6 +13,29 @@
 # limitations under the License.
 ---
 
+- name: Load network configuration for OIM node IP
+  ansible.builtin.include_vars:
+    file: "{{ input_project_dir }}/network_spec.yml"
+  when: input_project_dir is defined
+
+- name: Set default admin_nic_ip if not defined
+  ansible.builtin.set_fact:
+    admin_nic_ip: "{{ network_data.admin_network.static_ip[0] }}"
+  when:
+    - admin_nic_ip is not defined
+    - network_data is defined
+    - network_data.admin_network is defined
+    - network_data.admin_network.static_ip is defined
+
+- name: Fallback to localhost if admin_nic_ip still not defined
+  ansible.builtin.set_fact:
+    admin_nic_ip: "localhost"
+  when: admin_nic_ip is not defined
+
+- name: Display OIM node IP for delegation
+  ansible.builtin.debug:
+    msg: "Delegating podman commands to OIM node at: {{ admin_nic_ip }}"
+
 - name: Detect if OpenCHAMI was previously deployed
   ansible.builtin.include_tasks: detect_openchami_deployment.yml
 
