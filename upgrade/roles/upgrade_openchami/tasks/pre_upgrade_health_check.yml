@@ -25,25 +25,46 @@
       delegate_facts: true
       connection: ssh
 
+    - name: Test if port 8443 is listening
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -tlnp | grep 8443 || netstat -tlnp | grep 8443 || echo "port not found"
+      register: port_check
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Debug port check
+      ansible.builtin.debug:
+        msg: "Port 8443 check: {{ port_check.stdout }}"
+
     - name: Test BSS endpoint availability
       ansible.builtin.shell: |
         set -o pipefail
-        curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/boot/v1/bootscript
+        curl -k -v -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/boot/v1/bootscript 2>&1
       register: bss_pre_check
       changed_when: false
       failed_when: bss_pre_check.stdout not in ["200", "401"]
       delegate_to: oim
       connection: ssh
 
+    - name: Debug BSS check result
+      ansible.builtin.debug:
+        msg: "BSS check: rc={{ bss_pre_check.rc }}, stdout='{{ bss_pre_check.stdout }}', stderr='{{ bss_pre_check.stderr }}'"
+
     - name: Test SMD endpoint availability
       ansible.builtin.shell: |
         set -o pipefail
-        curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/hsm/v2/State/Components
+        curl -k -v -o /dev/null -w "%{http_code}" https://127.0.0.1:8443/hsm/v2/State/Components 2>&1
       register: smd_pre_check
       changed_when: false
       failed_when: smd_pre_check.stdout not in ["200", "401"]
       delegate_to: oim
       connection: ssh
+
+    - name: Debug SMD check result
+      ansible.builtin.debug:
+        msg: "SMD check: rc={{ smd_pre_check.rc }}, stdout='{{ smd_pre_check.stdout }}', stderr='{{ smd_pre_check.stderr }}'"
 
     - name: Capture baseline node count from SMD
       ansible.builtin.shell: |
