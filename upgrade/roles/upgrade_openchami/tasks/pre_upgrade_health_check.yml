@@ -28,7 +28,7 @@
     - name: Test BSS endpoint availability
       ansible.builtin.shell: |
         set -o pipefail
-        curl -k -s -o /dev/null -w "%{http_code}" --connect-to {{ admin_nic_ip }}:8443:127.0.0.1:8443 https://{{ admin_nic_ip }}:8443/boot/v1/bootscript
+        podman exec haproxy curl -k -s -o /dev/null -w "%{http_code}" http://localhost:8443/boot/v1/bootscript
       register: bss_pre_check
       changed_when: false
       failed_when: bss_pre_check.stdout not in ["200", "401"]
@@ -38,7 +38,7 @@
     - name: Test SMD endpoint availability
       ansible.builtin.shell: |
         set -o pipefail
-        curl -k -s -o /dev/null -w "%{http_code}" --connect-to {{ admin_nic_ip }}:8443:127.0.0.1:8443 https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components
+        podman exec haproxy curl -k -s -o /dev/null -w "%{http_code}" http://localhost:8443/hsm/v2/State/Components
       register: smd_pre_check
       changed_when: false
       failed_when: smd_pre_check.stdout not in ["200", "401"]
@@ -48,7 +48,7 @@
     - name: Capture baseline node count from SMD
       ansible.builtin.shell: |
         set -o pipefail
-        curl -k -s --connect-to {{ admin_nic_ip }}:8443:127.0.0.1:8443 https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components | jq '.Components | length' || echo "0"
+        podman exec haproxy curl -k -s http://localhost:8443/hsm/v2/State/Components | jq '.Components | length' || echo "0"
       register: pre_upgrade_node_count
       changed_when: false
       delegate_to: oim
