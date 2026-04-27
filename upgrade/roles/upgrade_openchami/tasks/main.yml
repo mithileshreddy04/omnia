@@ -13,8 +13,13 @@
 # limitations under the License.
 ---
 
-- name: Load network configuration for OIM node IP (informational)
+- name: Load network configuration for OIM node IP
   block:
+    - name: Check if network_spec.yml file exists
+      ansible.builtin.stat:
+        path: "/opt/omnia/input/project_default/network_spec.yml"
+      register: network_spec_stat
+
     - name: Include network_spec.yml file
       ansible.builtin.include_vars:
         file: "/opt/omnia/input/project_default/network_spec.yml"
@@ -35,13 +40,14 @@
         - network_data.admin_network is defined
         - network_data.admin_network.primary_oim_admin_ip is defined
 
-    - name: Display OIM node IP
-      ansible.builtin.debug:
-        msg: "OIM node IP: {{ admin_nic_ip | default('not found in network_spec.yml') }}"
+    - name: Fail if admin_nic_ip cannot be determined
+      ansible.builtin.fail:
+        msg: "Could not determine admin_nic_ip from network_spec.yml. This is required for SNI hostname resolution."
+      when: admin_nic_ip is not defined
   rescue:
     - name: Failed to load network configuration
-      ansible.builtin.debug:
-        msg: "Warning: Could not load network_spec.yml. Using delegate_to: oim group instead."
+      ansible.builtin.fail:
+        msg: "Could not load network_spec.yml or determine admin_nic_ip. This is required for SNI hostname resolution."
 
 - name: Detect if OpenCHAMI was previously deployed
   ansible.builtin.include_tasks: detect_openchami_deployment.yml
