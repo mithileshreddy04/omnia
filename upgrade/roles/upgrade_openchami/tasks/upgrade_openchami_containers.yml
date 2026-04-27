@@ -35,8 +35,12 @@
       delegate_facts: true
       connection: ssh
 
+    - name: Wait for containers to stop
+      ansible.builtin.pause:
+        seconds: 10
+
     - name: Remove old OpenCHAMI containers (preserve volumes)
-      ansible.builtin.command: podman rm {{ item.container }}
+      ansible.builtin.command: podman rm -f {{ item.container }}
       loop: "{{ openchami_containers }}"
       register: remove_result
       changed_when: true
