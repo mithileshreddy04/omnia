@@ -35,7 +35,7 @@
     - name: Check OpenCHAMI deployment status
       block:
         - name: Check if OpenCHAMI is deployed
-          ansible.builtin.command: podman ps --filter "name=smd" --format "{{.Names}}"
+          ansible.builtin.command: podman ps --filter "name=smd" --format '{% raw %}{{.Names}}{% endraw %}'
           register: openchami_check
           changed_when: false
           failed_when: false
@@ -44,7 +44,7 @@
           when: openchami_check.stdout | length > 0
           block:
             - name: Verify critical OpenCHAMI containers are running
-              ansible.builtin.command: podman ps --filter "name={{ item }}" --format "{{.Names}}"
+              ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
               loop:
                 - smd
                 - bss
