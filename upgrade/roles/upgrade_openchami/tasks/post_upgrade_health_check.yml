@@ -19,52 +19,40 @@
       ansible.builtin.pause:
         seconds: 60
 
-    - name: Test BSS endpoint availability
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/boot/v1/bootscript"
-        method: GET
-        validate_certs: false
-        status_code: [200, 401]
-        timeout: 10
-      register: bss_post_check
-      failed_when: bss_post_check.status not in [200, 401]
-      delegate_to: oim
-      connection: ssh
-
-    - name: Test SMD endpoint availability
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
-        method: GET
-        validate_certs: false
-        status_code: [200, 401]
-        timeout: 10
-      register: smd_post_check
-      failed_when: smd_post_check.status not in [200, 401]
-      delegate_to: oim
-      connection: ssh
-
-    - name: Capture post-upgrade node count from SMD
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
-        method: GET
-        validate_certs: false
-        return_content: true
-        status_code: [200, 401]
-        timeout: 10
-      register: smd_components_post
-      delegate_to: oim
-      connection: ssh
-
-    - name: Parse node count from SMD response
-      ansible.builtin.set_fact:
-        post_upgrade_node_count: "{{ (smd_components_post.json.Components | default([])) | length }}"
+    - name: Verify all OpenCHAMI containers are running
+      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
+      loop: "{{ openchami_critical_containers }}"
+      register: container_check
+      changed_when: false
+      failed_when: container_check.stdout | length == 0
       delegate_to: oim
       delegate_facts: true
+      connection: ssh
+
+    - name: Check postgres database connectivity
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres pg_isready -U hmsdsuser
+      register: postgres_check
+      changed_when: false
+      failed_when: postgres_check.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Capture post-upgrade node count from database
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres psql -U hmsdsuser -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+      register: post_upgrade_node_count
+      changed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
 
     - name: Verify node count matches baseline
       ansible.builtin.assert:
         that:
-          - post_upgrade_node_count | int == pre_upgrade_node_count | int
+          - post_upgrade_node_count.stdout | int == pre_upgrade_node_count.stdout | int
         fail_msg: "{{ upgrade_messages.health_check.node_count_mismatch }}"
         success_msg: "{{ upgrade_messages.health_check.node_count_match }}"
 

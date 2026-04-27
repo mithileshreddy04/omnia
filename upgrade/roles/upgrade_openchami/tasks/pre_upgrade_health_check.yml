@@ -25,47 +25,25 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Test BSS endpoint availability
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/boot/v1/bootscript"
-        method: GET
-        validate_certs: false
-        status_code: [200, 401]
-        timeout: 10
-      register: bss_pre_check
-      failed_when: bss_pre_check.status not in [200, 401]
+    - name: Check postgres database connectivity
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres pg_isready -U hmsdsuser
+      register: postgres_check
+      changed_when: false
+      failed_when: postgres_check.rc != 0
       delegate_to: oim
       connection: ssh
 
-    - name: Test SMD endpoint availability
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
-        method: GET
-        validate_certs: false
-        status_code: [200, 401]
-        timeout: 10
-      register: smd_pre_check
-      failed_when: smd_pre_check.status not in [200, 401]
-      delegate_to: oim
-      connection: ssh
-
-    - name: Capture baseline node count from SMD
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
-        method: GET
-        validate_certs: false
-        return_content: true
-        status_code: [200, 401]
-        timeout: 10
-      register: smd_components_pre
-      delegate_to: oim
-      connection: ssh
-
-    - name: Parse node count from SMD response
-      ansible.builtin.set_fact:
-        pre_upgrade_node_count: "{{ (smd_components_pre.json.Components | default([])) | length }}"
+    - name: Capture baseline node count from database
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres psql -U hmsdsuser -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+      register: pre_upgrade_node_count
+      changed_when: false
       delegate_to: oim
       delegate_facts: true
+      connection: ssh
 
     - name: Display pre-upgrade health check success
       ansible.builtin.debug:

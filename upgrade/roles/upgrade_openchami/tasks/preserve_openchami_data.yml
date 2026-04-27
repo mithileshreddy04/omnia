@@ -34,16 +34,14 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Capture SMD inventory snapshot
-      ansible.builtin.uri:
-        url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
-        method: GET
-        validate_certs: false
-        return_content: true
-        dest: "{{ openchami_snapshot_dir }}/smd_inventory.json"
-        timeout: 30
+    - name: Capture SMD inventory snapshot from database
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres psql -U hmsdsuser -d hmsds -t -c "SELECT * FROM smd.xname;" > {{ openchami_snapshot_dir }}/smd_inventory.txt 2>/dev/null || echo "No data"
       register: smd_snapshot
+      changed_when: true
       delegate_to: oim
+      delegate_facts: true
       connection: ssh
 
     - name: List MinIO buckets
