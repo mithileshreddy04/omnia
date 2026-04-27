@@ -53,7 +53,7 @@
       loop: "{{ openchami_containers }}"
       register: version_check
       changed_when: false
-      failed_when: version_check.stdout != "" and version_check.stdout != item.expected_image
+      failed_when: version_check.stdout != "" and version_check.stdout != "Container {{ item.container }} does not exist" and version_check.stdout != item.expected_image
       delegate_to: oim
       delegate_facts: true
       connection: ssh
