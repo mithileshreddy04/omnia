@@ -14,27 +14,40 @@
 ---
 
 - name: Load network configuration for OIM node IP
-  ansible.builtin.include_vars:
-    file: "{{ input_project_dir }}/network_spec.yml"
-  when: input_project_dir is defined
+  block:
+    - name: Include network_spec.yml file
+      ansible.builtin.include_vars:
+        file: "/opt/omnia/input/project_default/network_spec.yml"
+      register: include_network_spec
+      failed_when: false
 
-- name: Set default admin_nic_ip if not defined
-  ansible.builtin.set_fact:
-    admin_nic_ip: "{{ network_data.admin_network.static_ip[0] }}"
-  when:
-    - admin_nic_ip is not defined
-    - network_data is defined
-    - network_data.admin_network is defined
-    - network_data.admin_network.static_ip is defined
+    - name: Parse network_spec data
+      ansible.builtin.set_fact:
+        network_data: "{{ network_data | default({}) | combine({item.key: item.value}) }}"
+      with_dict: "{{ Networks }}"
+      when: Networks is defined
 
-- name: Fallback to localhost if admin_nic_ip still not defined
-  ansible.builtin.set_fact:
-    admin_nic_ip: "localhost"
-  when: admin_nic_ip is not defined
+    - name: Set admin_nic_ip from network_spec
+      ansible.builtin.set_fact:
+        admin_nic_ip: "{{ network_data.admin_network.primary_oim_admin_ip }}"
+      when:
+        - network_data is defined
+        - network_data.admin_network is defined
+        - network_data.admin_network.primary_oim_admin_ip is defined
 
-- name: Display OIM node IP for delegation
-  ansible.builtin.debug:
-    msg: "Delegating podman commands to OIM node at: {{ admin_nic_ip }}"
+    - name: Display OIM node IP for delegation
+      ansible.builtin.debug:
+        msg: "Delegating podman commands to OIM node at: {{ admin_nic_ip }}"
+      when: admin_nic_ip is defined
+
+  rescue:
+    - name: Failed to load network configuration
+      ansible.builtin.debug:
+        msg: "Warning: Could not load network_spec.yml. Using localhost for delegation."
+
+    - name: Fallback to localhost
+      ansible.builtin.set_fact:
+        admin_nic_ip: "localhost"
 
 - name: Detect if OpenCHAMI was previously deployed
   ansible.builtin.include_tasks: detect_openchami_deployment.yml
