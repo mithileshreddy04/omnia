@@ -18,8 +18,8 @@
     - name: Get current container image tags
       ansible.builtin.shell: |
         set -o pipefail
-        podman inspect {{ item.container }} --format '{{{{.Image}}}}' 2>/dev/null | \
-        podman inspect --format '{{{{index .RepoTags 0}}}}' - 2>/dev/null || echo "not_found"
+        podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}' 2>/dev/null | \
+        podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' - 2>/dev/null || echo "not_found"
       loop: "{{ openchami_containers }}"
       register: current_images
       changed_when: false
