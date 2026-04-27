@@ -289,7 +289,8 @@
         - /root/ldms_sampler.sh
 {% endif %}
 
-        - bash /usr/local/bin/doca-install.sh && bash /usr/local/bin/configure-ib-network.sh
+        - bash /usr/local/bin/doca-install.sh || true
+        - bash /usr/local/bin/configure-ib-network.sh
         - /usr/local/bin/check_slurm_controller_status.sh
         - chown -R {{ slurm_user }}:{{ slurm_user }} {{ slurm_slurmd_log_dir_effective }}
         - chown -R {{ slurm_user }}:{{ slurm_user }} {{ slurm_slurmd_pid_dir_effective }}
