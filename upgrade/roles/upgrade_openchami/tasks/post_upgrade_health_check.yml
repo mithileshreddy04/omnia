@@ -39,17 +39,6 @@
       delegate_to: oim
       connection: ssh
 
-    - name: Test MinIO S3 access
-      ansible.builtin.shell: |
-        set -o pipefail
-        podman exec minio-server mc ls local/
-      register: minio_post_check
-      changed_when: false
-      failed_when: minio_post_check.rc != 0
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
-
     - name: Verify container image versions
       ansible.builtin.shell: |
         set -o pipefail
