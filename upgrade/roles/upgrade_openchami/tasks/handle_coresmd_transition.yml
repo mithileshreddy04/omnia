@@ -24,6 +24,15 @@
       delegate_facts: true
       connection: ssh
 
+    - name: Check if coresmd-coredhcp service exists
+      ansible.builtin.shell: |
+        systemctl list-unit-files | grep -q "coresmd-coredhcp.service"
+      register: coredhcp_service_check
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
     - name: Stop and disable old coresmd service if it exists
       ansible.builtin.systemd:
         name: coresmd
@@ -42,27 +51,61 @@
       delegate_facts: true
       connection: ssh
 
+    - name: Remove old coresmd quadlet file if it exists
+      ansible.builtin.file:
+        path: /etc/containers/systemd/coresmd.container
+        state: absent
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      when: coresmd_service_check.rc == 0
+
+    - name: Create coresmd-coredhcp quadlet file
+      ansible.builtin.template:
+        src: coresmd-coredhcp.container.j2
+        dest: /etc/containers/systemd/coresmd-coredhcp.container
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Create coresmd-coredns quadlet file
+      ansible.builtin.template:
+        src: coresmd-coredns.container.j2
+        dest: /etc/containers/systemd/coresmd-coredns.container
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
     - name: Enable and start coresmd-coredhcp service
       ansible.builtin.systemd:
         name: coresmd-coredhcp
         state: started
         enabled: true
-        daemon_reload: true
       delegate_to: oim
       delegate_facts: true
       connection: ssh
-      failed_when: false
 
     - name: Enable and start coresmd-coredns service
       ansible.builtin.systemd:
         name: coresmd-coredns
         state: started
         enabled: true
-        daemon_reload: true
       delegate_to: oim
       delegate_facts: true
       connection: ssh
-      failed_when: false
 
     - name: Display coresmd transition success
       ansible.builtin.debug:

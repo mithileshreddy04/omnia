@@ -42,6 +42,9 @@
       ansible.builtin.pause:
         seconds: 10
 
+    - name: Handle coresmd transition
+      ansible.builtin.include_tasks: handle_coresmd_transition.yml
+
     - name: Remove old OpenCHAMI containers (preserve volumes)
       ansible.builtin.command: podman rm -f {{ item.container }}
       loop: "{{ openchami_containers }}"

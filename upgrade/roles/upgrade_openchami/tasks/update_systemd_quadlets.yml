@@ -27,6 +27,28 @@
       connection: ssh
       failed_when: false
 
+    - name: Update coresmd-coredhcp quadlet image (if exists)
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/coresmd-coredhcp.container"
+        regexp: '^Image=.*'
+        line: "Image=ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update coresmd-coredns quadlet image (if exists)
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/coresmd-coredns.container"
+        regexp: '^Image=.*'
+        line: "Image=ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
     - name: Update smd-init quadlet image
       ansible.builtin.lineinfile:
         path: "/etc/containers/systemd/smd-init.container"
