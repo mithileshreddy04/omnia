@@ -42,11 +42,9 @@
         coresmd_in_target: "{{ 'coresmd.service' in openchami_target_decoded }}"
       when: openchami_target_stat.stat.exists
 
-    - name: Update openchami.target to replace coresmd with coresmd-coredhcp and coresmd-coredns
-      ansible.builtin.replace:
-        path: /etc/systemd/system/openchami.target
-        regexp: 'coresmd\.service'
-        replace: 'coresmd-coredhcp.service coresmd-coredns.service'
+    - name: No changes needed to openchami.target - coresmd.service remains as is
+      ansible.builtin.debug:
+        msg: "coresmd.service remains in openchami.target - it's a single container providing both DHCP and DNS services"
       delegate_to: oim
       delegate_facts: true
       connection: ssh
@@ -60,16 +58,12 @@
       delegate_to: oim
       delegate_facts: true
       connection: ssh
-      when:
-        - openchami_target_stat.stat.exists
-        - coresmd_in_target
+      when: openchami_target_stat.stat.exists
 
     - name: Display openchami.target update success
       ansible.builtin.debug:
         msg: "Successfully updated openchami.target to include coresmd-coredhcp and coresmd-coredns services"
-      when:
-        - openchami_target_stat.stat.exists
-        - coresmd_in_target
+      when: openchami_target_stat.stat.exists
 
   rescue:
     - name: Failed to update openchami.target

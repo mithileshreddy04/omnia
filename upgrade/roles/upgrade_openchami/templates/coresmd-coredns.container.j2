@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenCHAMI CoreDNS Service
+Wants=network-online.target
+After=network-online.target
+Wants=openchami-internal-network.target
+After=openchami-internal-network.target
+PartOf=openchami.target
+
+[Container]
+Image=ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}
+ContainerName=coresmd-coredns
+Network=host
+PublishPort=53:53/udp
+PublishPort=53:53/tcp
+Volume=/etc/openchami/configs/Corefile:/etc/coredns/Corefile:ro
+Restart=on-failure
+
+[Install]
+RequiredBy=openchami.target
+WantedBy=multi-user.target
