@@ -45,6 +45,9 @@
     - name: Handle coresmd transition
       ansible.builtin.include_tasks: handle_coresmd_transition.yml
 
+    - name: Update openchami.target for new services
+      ansible.builtin.include_tasks: update_openchami_target.yml
+
     - name: Remove old OpenCHAMI containers (preserve volumes)
       ansible.builtin.command: podman rm -f {{ item.container }}
       loop: "{{ openchami_containers }}"
