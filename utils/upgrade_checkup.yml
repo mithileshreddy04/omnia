@@ -31,3 +31,44 @@
           If you don't require input files to be migrated, reconfigure the default input files, remove the lock file using the following command
           "rm /opt/omnia/.data/upgrade_in_progress.lock" and then proceed.
       when: upgrade_lock.stat.exists
+
+    - name: Check OpenCHAMI deployment status
+      block:
+        - name: Check if OpenCHAMI is deployed
+          ansible.builtin.command: podman ps --filter "name=smd" --format '{% raw %}{{.Names}}{% endraw %}'
+          register: openchami_check
+          changed_when: false
+          failed_when: false
+
+        - name: Validate OpenCHAMI health if deployed
+          when: openchami_check.stdout | length > 0
+          block:
+            - name: Verify critical OpenCHAMI containers are running
+              ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
+              loop:
+                - smd
+                - bss
+                - cloud-init-server
+                - postgres
+                - minio-server
+                - haproxy
+              register: container_status
+              changed_when: false
+              failed_when: container_status.stdout | length == 0
+
+            - name: Test SMD endpoint availability
+              ansible.builtin.uri:
+                url: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
+                method: GET
+                validate_certs: false
+                status_code: [200, 401]
+              register: smd_health
+              failed_when: smd_health.status not in [200, 401]
+
+            - name: Fail if OpenCHAMI is unhealthy
+              ansible.builtin.fail:
+                msg: |
+                  OpenCHAMI health check failed. Upgrade cannot proceed.
+                  Missing or unhealthy containers detected.
+                  Run 'podman ps -a' to diagnose container issues.
+              when: container_status.results | selectattr('stdout', 'equalto', '') | list | length > 0

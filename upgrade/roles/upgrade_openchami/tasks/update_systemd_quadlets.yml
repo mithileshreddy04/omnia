@@ -1,0 +1,103 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+- name: Update systemd quadlet files with new image versions
+  block:
+    - name: Update image tags in systemd quadlet files
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/{{ item.container }}.container"
+        regexp: '^Image=.*'
+        line: "Image={{ item.image }}"
+        state: present
+      loop: "{{ openchami_target_images }}"
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update smd-init quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/smd-init.container"
+        regexp: '^Image=.*'
+        line: "Image=ghcr.io/openchami/smd:{{ openchami_smd_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update bss-init quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/bss-init.container"
+        regexp: '^Image=.*'
+        line: "Image=ghcr.io/openchami/bss:{{ openchami_bss_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update minio quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/minio.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/pgsty/minio:{{ minio_release_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update registry quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/registry.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/library/registry:{{ registry_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update acme-register quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/acme-register.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/neilpang/acme.sh:{{ acme_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Update acme-deploy quadlet image
+      ansible.builtin.lineinfile:
+        path: "/etc/containers/systemd/acme-deploy.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/neilpang/acme.sh:{{ acme_tag }}"
+        state: present
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+      failed_when: false
+
+    - name: Display quadlet update success
+      ansible.builtin.debug:
+        msg: "{{ upgrade_messages.quadlet_update.success }}"
+
+  rescue:
+    - name: Quadlet update failed
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.quadlet_update.failure }}"

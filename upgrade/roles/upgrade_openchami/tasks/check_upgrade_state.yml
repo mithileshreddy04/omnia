@@ -1,0 +1,58 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+- name: Check current OpenCHAMI container versions
+  block:
+    - name: Get current container image tags
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}' 2>/dev/null | \
+        podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' - 2>/dev/null || echo "not_found"
+      loop: "{{ openchami_containers }}"
+      register: current_images
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Determine if upgrade is needed
+      ansible.builtin.set_fact:
+        upgrade_needed: >-
+          {{
+            current_images.results |
+            selectattr('stdout', 'defined') |
+            map(attribute='stdout') |
+            zip(openchami_containers | map(attribute='expected_image')) |
+            selectattr('0', 'ne', '1') |
+            list | length > 0
+          }}
+
+    - name: Display upgrade status
+      ansible.builtin.debug:
+        msg: "{{ upgrade_messages.idempotency.skip_message }}"
+      when: not (upgrade_needed | bool)
+
+    - name: Display containers requiring upgrade
+      ansible.builtin.debug:
+        msg:
+          - "{{ upgrade_messages.idempotency.upgrade_needed }}"
+          - "Containers to upgrade: {{ current_images.results | zip(openchami_containers) | selectattr('0.stdout', 'ne', '1.expected_image') | map(attribute='1.container') | list }}"
+      when: upgrade_needed | bool
+
+  rescue:
+    - name: Upgrade state check failed
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.idempotency.check_failure }}"
