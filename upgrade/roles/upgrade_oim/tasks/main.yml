@@ -32,10 +32,6 @@
   ansible.builtin.include_role:
     name: import_input_parameters
 
-- name: Upgrade OpenCHAMI containers and services
-  ansible.builtin.include_role:
-    name: upgrade_openchami
-  when: openchami_installed | default(true) | bool
 # Phase 2: Manage upgrade inputs (load config, validate, calculate hops)
 - name: "Phase 2 - Manage Upgrade Inputs"
   ansible.builtin.include_role:
@@ -50,3 +46,8 @@
 - name: "Phase 4 - Execute OIM Upgrade Tasks"
   ansible.builtin.debug:
     msg: "OIM upgrade tasks would be executed here"
+
+- name: Upgrade OpenCHAMI containers and services
+  ansible.builtin.include_role:
+    name: upgrade_openchami
+  when: openchami_installed | default(true) | bool

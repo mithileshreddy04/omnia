@@ -13,21 +13,84 @@
 # limitations under the License.
 ---
 
-# OpenCHAMI upgrade lock configuration
+# ===========================================================================
+# OpenCHAMI Upgrade Configuration — Omnia 2.1.0.0 → 2.2.0.0
+# ===========================================================================
+
+# --- Lock & permissions ---------------------------------------------------
 openchami_upgrade_lock_path: "/opt/omnia/.data/openchami_upgrade_in_progress.lock"
 dir_permissions_755: "0755"
 file_permissions_644: "0644"
 
-# OpenCHAMI snapshot configuration
+# --- Backup / snapshot directories ----------------------------------------
+# WHY: Every artefact from v2.1 is captured so rollback is always possible.
+openchami_backup_base_dir: "/opt/omnia/.backup/openchami/v2.1.0.0"
+openchami_backup_quadlets_dir: "{{ openchami_backup_base_dir }}/quadlets"
+openchami_backup_env_dir: "{{ openchami_backup_base_dir }}/env"
+openchami_backup_configs_dir: "{{ openchami_backup_base_dir }}/configs"
+openchami_backup_db_dir: "{{ openchami_backup_base_dir }}/db"
 openchami_snapshot_base_dir: "/opt/omnia/openchami/upgrade_snapshots"
 openchami_snapshot_dir: "{{ openchami_snapshot_base_dir }}/{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '') }}"
+openchami_pre_upgrade_snapshot: "/opt/omnia/.data/openchami_pre_upgrade_snapshot.json"
 
-# OpenCHAMI API endpoints
-openchami_bss_endpoint: "https://{{ admin_nic_ip }}:8443/boot/v1/bootscript"
-openchami_smd_endpoint: "https://{{ admin_nic_ip }}:8443/hsm/v2/State/Components"
+# --- Quadlet paths on OIM -------------------------------------------------
+openchami_quadlet_dir: "/etc/containers/systemd"
+openchami_systemd_dir: "/etc/systemd/system"
 
-# OpenCHAMI critical containers (must be running for health checks)
-openchami_critical_containers:
+# --- Container service ports (internal HTTP) ------------------------------
+# WHY: Direct container endpoints serve HTTP only (HTTPS fails with SSL error)
+# Empirical evidence: curl https://10.89.3.140:27778 → SSL packet length error
+#                     curl http://10.89.3.140:27778 → {"bss-status":"running"}
+openchami_smd_port: 27779
+openchami_bss_port: 27778
+
+# --- API endpoint paths (joined with dynamic IP at runtime) ---------------
+openchami_smd_components_path: "/hsm/v2/State/Components"
+openchami_smd_ready_path: "/hsm/v2/service/ready"
+openchami_bss_status_path: "/boot/v1/service/status"
+
+# --- Container names for IP lookup ----------------------------------------
+openchami_smd_container: "smd"
+openchami_bss_container: "bss"
+
+# --- OpenCHAMI deployment-recipes clone path (set by prepare_oim) ---------
+openchami_clone_path: "/opt/omnia/openchami/deployment-recipes"
+
+# ===========================================================================
+# Version Matrix — v2.1.0.0 (source) → v2.2.0.0 (target)
+# ESPEC-OIM-2026-001 Gap G-008: Most images pinned, haproxy/curl remain :latest.
+# ===========================================================================
+
+# --- Target v2.2.0.0 component tags (pinned) ------------------------------
+openchami_local_ca_tag: "v0.2.2"
+openchami_opaal_tag: "v0.3.10"
+openchami_smd_tag: "v2.19.0"
+openchami_bss_tag: "v1.32.1"
+openchami_cloud_init_tag: "v1.3.0"
+openchami_coresmd_tag: "v0.4.0"
+postgres_tag: "11.5-alpine"
+hydra_tag: "v2.3"
+haproxy_tag: "latest"
+minio_release_tag: "RELEASE.2026-04-17T00-00-00Z"
+registry_tag: "3.1.0"
+curl_tag: "latest"
+acme_tag: "3.1.1"
+
+# --- Source v2.1.0.0 component tags (for rollback image pull) -------------
+openchami_v21_local_ca_tag: "v0.2.1"
+openchami_v21_opaal_tag: "v0.3.10"
+openchami_v21_smd_tag: "v2.18.0"
+openchami_v21_bss_tag: "v1.32.0"
+openchami_v21_cloud_init_tag: "v1.2.3"
+openchami_v21_coresmd_tag: "v0.3.0"
+openchami_v21_hydra_tag: "v2.3"
+
+# ===========================================================================
+# Container lists
+# ===========================================================================
+
+# Critical containers for PRE-upgrade health checks (v2.1)
+openchami_v21_critical_containers:
   - smd
   - bss
   - cloud-init-server
@@ -35,68 +98,133 @@ openchami_critical_containers:
   - haproxy
   - coresmd
 
-# OpenCHAMI target image versions (Omnia 2.2.0.0)
+# Critical containers for POST-upgrade health checks (v2.2)
+# v2.2: coresmd split into coresmd-coredhcp and coresmd-coredns
+openchami_v22_critical_containers:
+  - smd
+  - bss
+  - cloud-init-server
+  - postgres
+  - haproxy
+  - coresmd-coredhcp
+  - coresmd-coredns
+
+# Legacy: for backward compatibility (defaults to v2.2)
+openchami_critical_containers: "{{ openchami_v22_critical_containers }}"
+
+# All containers managed by quadlets that we iterate for env backup / removal
+# WHY: opaal-idp shares the opaal image; minio-server is the container name
+#      even though the quadlet file is minio.container.
+openchami_all_containers:
+  - step-ca
+  - postgres
+  - hydra
+  - hydra-migrate
+  - hydra-gen-jwks
+  - opaal-idp
+  - opaal
+  - smd-init
+  - smd
+  - bss-init
+  - bss
+  - cloud-init-server
+  - coresmd
+  - haproxy
+  - minio-server
+  - registry
+  - acme-register
+  - acme-deploy
+
+# Target images to pull (one entry per unique image:tag)
 openchami_target_images:
-  - image: "ghcr.io/openchami/local-ca:v0.2.2"
+  - image: "ghcr.io/openchami/local-ca:{{ openchami_local_ca_tag }}"
     container: "step-ca"
-  - image: "ghcr.io/openchami/opaal:v0.3.10"
+  - image: "ghcr.io/openchami/opaal:{{ openchami_opaal_tag }}"
     container: "opaal"
-  - image: "ghcr.io/openchami/smd:v2.19.0"
+  - image: "ghcr.io/openchami/smd:{{ openchami_smd_tag }}"
     container: "smd"
-  - image: "ghcr.io/openchami/bss:v1.32.1"
+  - image: "ghcr.io/openchami/bss:{{ openchami_bss_tag }}"
     container: "bss"
-  - image: "ghcr.io/openchami/cloud-init:v1.3.0"
+  - image: "ghcr.io/openchami/cloud-init:{{ openchami_cloud_init_tag }}"
     container: "cloud-init-server"
-  - image: "ghcr.io/openchami/coresmd:v0.4.0"
+  - image: "ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}"
     container: "coresmd"
-  - image: "docker.io/library/postgres:11.5-alpine"
+  - image: "docker.io/library/postgres:{{ postgres_tag }}"
     container: "postgres"
-  - image: "docker.io/oryd/hydra:v2.3"
+  - image: "docker.io/oryd/hydra:{{ hydra_tag }}"
     container: "hydra"
-  - image: "cgr.dev/chainguard/haproxy:latest"
+  - image: "cgr.dev/chainguard/haproxy:{{ haproxy_tag }}"
     container: "haproxy"
-  - image: "docker.io/pgsty/minio:RELEASE.2026-04-17T00-00-00Z"
-    container: "minio"
-  - image: "docker.io/library/registry:3.1.0"
+  - image: "docker.io/pgsty/minio:{{ minio_release_tag }}"
+    container: "minio-server"
+  - image: "docker.io/library/registry:{{ registry_tag }}"
     container: "registry"
-  - image: "cgr.dev/chainguard/curl:latest"
+  - image: "cgr.dev/chainguard/curl:{{ curl_tag }}"
     container: "curl"
-  - image: "docker.io/neilpang/acme.sh:3.1.1"
+  - image: "docker.io/neilpang/acme.sh:{{ acme_tag }}"
     container: "acme"
 
-# OpenCHAMI containers list (for iteration)
+# Containers with expected images — used for idempotency check
 openchami_containers:
   - container: "step-ca"
-    expected_image: "ghcr.io/openchami/local-ca:v0.2.2"
+    expected_image: "ghcr.io/openchami/local-ca:{{ openchami_local_ca_tag }}"
   - container: "opaal"
-    expected_image: "ghcr.io/openchami/opaal:v0.3.10"
+    expected_image: "ghcr.io/openchami/opaal:{{ openchami_opaal_tag }}"
   - container: "opaal-idp"
-    expected_image: "ghcr.io/openchami/opaal:v0.3.10"
+    expected_image: "ghcr.io/openchami/opaal:{{ openchami_opaal_tag }}"
   - container: "smd"
-    expected_image: "ghcr.io/openchami/smd:v2.19.0"
+    expected_image: "ghcr.io/openchami/smd:{{ openchami_smd_tag }}"
   - container: "bss"
-    expected_image: "ghcr.io/openchami/bss:v1.32.1"
+    expected_image: "ghcr.io/openchami/bss:{{ openchami_bss_tag }}"
   - container: "cloud-init-server"
-    expected_image: "ghcr.io/openchami/cloud-init:v1.3.0"
+    expected_image: "ghcr.io/openchami/cloud-init:{{ openchami_cloud_init_tag }}"
   - container: "coresmd"
-    expected_image: "ghcr.io/openchami/coresmd:v0.4.0"
+    expected_image: "ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}"
   - container: "postgres"
-    expected_image: "docker.io/library/postgres:11.5-alpine"
+    expected_image: "docker.io/library/postgres:{{ postgres_tag }}"
   - container: "hydra"
-    expected_image: "docker.io/oryd/hydra:v2.3"
+    expected_image: "docker.io/oryd/hydra:{{ hydra_tag }}"
   - container: "haproxy"
-    expected_image: "cgr.dev/chainguard/haproxy:latest"
+    expected_image: "cgr.dev/chainguard/haproxy:{{ haproxy_tag }}"
+  - container: "minio-server"
+    expected_image: "docker.io/pgsty/minio:{{ minio_release_tag }}"
   - container: "registry"
-    expected_image: "docker.io/library/registry:3.1.0"
+    expected_image: "docker.io/library/registry:{{ registry_tag }}"
 
-# OpenCHAMI volumes (for cleanup)
+# Persistent volumes — MUST remain untouched during upgrade/rollback
 openchami_volumes:
   - postgres-data
-  - minio-data
-  - registry-data
-  - step-ca-data
+  - step-ca-home
+  - step-ca-db
+  - step-root-ca
+  - haproxy-certs
+  - acme-certs
+  - local-certs
 
+# ===========================================================================
+# Quadlet files present on OIM (for backup and update)
+# ===========================================================================
+openchami_quadlet_files:
+  - step-ca.container
+  - postgres.container
+  - hydra-migrate.container
+  - hydra.container
+  - hydra-gen-jwks.container
+  - opaal-idp.container
+  - opaal.container
+  - smd-init.container
+  - smd.container
+  - bss-init.container
+  - bss.container
+  - cloud-init-server.container
+  - coresmd.container
+  - haproxy.container
+  - ochami-init.container
+  - ochami-jenga.container
+
+# ===========================================================================
 # Upgrade messages
+# ===========================================================================
 upgrade_messages:
   deployment:
     not_deployed: |
@@ -107,7 +235,7 @@ upgrade_messages:
     acquired: "OpenCHAMI upgrade lock acquired successfully"
     released: "OpenCHAMI upgrade lock released successfully"
     exists: |
-      OpenCHAMI upgrade lock already exists at {{ openchami_upgrade_lock_path | default('/opt/omnia/.data/openchami_upgrade_in_progress.lock') }}.
+      OpenCHAMI upgrade lock already exists at {{ openchami_upgrade_lock_path }}.
       Another upgrade may be in progress.
       To force unlock, run with: -e force_unlock=true
   idempotency:
@@ -129,23 +257,28 @@ upgrade_messages:
       Post-upgrade: {{ post_upgrade_node_count.stdout | default('N/A') }}
       SMD inventory may be corrupted. Check logs and consider rollback.
   data_preservation:
-    success: "OpenCHAMI data preserved successfully in {{ openchami_snapshot_dir | default('N/A') }}"
+    success: "OpenCHAMI data preserved successfully"
     failure: |
       Failed to preserve OpenCHAMI data.
-      Snapshot directory: {{ openchami_snapshot_dir | default('N/A') }}
       Upgrade aborted to prevent data loss.
   container_upgrade:
-    success: "OpenCHAMI containers upgraded successfully to target versions"
+    success: "OpenCHAMI containers upgraded successfully to v2.2.0.0 target versions."
     failure: "OpenCHAMI container upgrade failed."
   quadlet_update:
     success: "Systemd quadlet files updated with new image versions"
     failure: "Failed to update systemd quadlet files with new image versions"
+  env_parity:
+    success: "Environment variable parity check passed. All v2.1 env vars present in v2.2 containers."
+    failure: |
+      Environment variable parity check FAILED.
+      Some v2.1 environment variables are missing from v2.2 containers.
+      Review diff output above and check backup at {{ openchami_backup_env_dir }}.
   troubleshooting:
     pre_check_diagnosis: |
       Please resolve issues before retrying upgrade:
       - Check container status: podman ps -a
       - Check container logs: podman logs <container_name>
-      - Verify network connectivity: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
+      - Verify network connectivity: curl -k https://localhost:8443/hsm/v2/State/Components
       - Check systemd status: systemctl status openchami.target
     container_upgrade_diagnosis: |
       Check container logs for errors:
@@ -157,19 +290,34 @@ upgrade_messages:
       Review the following:
       - Container logs: podman logs <container_name>
       - Service status: systemctl status openchami.target
-      - API endpoints: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
+      - API endpoints: curl -k https://localhost:8443/hsm/v2/State/Components
 
-# OpenCHAMI component version tags (for quadlet updates)
-openchami_local_ca_tag: "v0.2.2"
-openchami_opaal_tag: "v0.3.10"
-openchami_smd_tag: "v2.19.0"
-openchami_bss_tag: "v1.32.1"
-openchami_cloud_init_tag: "v1.3.0"
-openchami_coresmd_tag: "v0.4.0"
-minio_release_tag: "RELEASE.2026-04-17T00-00-00Z"
-postgres_tag: "11.5-alpine"
-hydra_tag: "v2.3"
-haproxy_tag: "latest"
-registry_tag: "3.1.0"
-curl_tag: "latest"
-acme_tag: "3.1.1"
+# ===========================================================================
+# Recipe Persistence — v2.2 deployment-recipes on the OIM
+# ===========================================================================
+# WHY: Without persisting v2.2 recipes to the core path, future operations
+# (prepare_oim re-runs, oim_cleanup, discovery) silently revert to v2.1.
+
+# v2.2 deployment-recipes git metadata (from prepare_oim/roles/deploy_containers/openchami/vars/main.yml)
+openchami_git_repo: "https://github.com/OpenCHAMI/deployment-recipes.git"
+openchami_v22_git_version: "bf1f6dfdc7f6107a4227568987faedb1b79b95fa"
+
+# Backup path for v2.1 recipes before overwrite
+openchami_recipes_backup_dir: "{{ openchami_backup_base_dir }}/deployment-recipes"
+
+# v2.2 RPM versions (from deployment-recipes/dell/podman-quadlets/roles/configs/defaults/main.yaml)
+openchami_v22_rpm_url: "https://github.com/OpenCHAMI/release/releases/download/v0.1.2/openchami-0.1.2.rpm"
+openchami_v22_rpm_name: "openchami-0.1.2.rpm"
+ochami_v22_client_rpm_url: "https://github.com/OpenCHAMI/ochami/releases/download/v0.7.1/ochami_0.7.1_linux_amd64.rpm"
+ochami_v22_client_rpm_name: "ochami_0.7.1_linux_amd64.rpm"
+
+# Config vars path written by prepare_oim (templates configs.yaml.j2)
+openchami_config_vars_path: "/opt/omnia/openchami/configs_vars.yaml"
+
+# Version metadata persisted after successful upgrade
+openchami_version_metadata_path: "/opt/omnia/.data/openchami_version.json"
+openchami_target_version: "2.2.0.0"
+openchami_source_version: "2.1.0.0"
+
+# Container prune safety — max age for stale containers
+openchami_prune_age: "24h"

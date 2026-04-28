@@ -1,0 +1,306 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Persist v2.2 Deployment Recipes, RPMs, and Version Metadata
+# ===========================================================================
+# PURPOSE: Ensure the OIM filesystem matches a fresh v2.2 deployment so
+# future operations (prepare_oim, oim_cleanup, discovery) read v2.2 content.
+#
+# PHASES:
+#   H1 — Update deployment-recipes at core path to v2.2
+#   H2 — Upgrade OpenCHAMI and ochami RPMs to v2.2
+#   H3 — Prune stale containers and images
+#   H4 — Write version metadata
+# ===========================================================================
+
+- name: Persist v2.2 recipes and metadata
+  tags: [openchami, upgrade, persistence]
+  block:
+
+    # ====================================================================
+    # Phase H1 — Update deployment-recipes at core path
+    # WHY: Without this, future prepare_oim re-runs clone v2.1 recipes
+    # (since the existing clone at core path is v2.1 and the clone task
+    # skips when the directory already exists).
+    # ====================================================================
+
+    - name: Check if deployment-recipes exist at core path
+      ansible.builtin.stat:
+        path: "{{ openchami_clone_path }}/dell/podman-quadlets"
+      register: recipes_exist
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check current git revision at core path
+      ansible.builtin.command: git -C "{{ openchami_clone_path }}" rev-parse HEAD
+      register: current_git_rev
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+      when: recipes_exist.stat.exists | default(false)
+
+    - name: Determine if recipe update needed
+      ansible.builtin.set_fact:
+        recipes_update_needed: >-
+          {{ not (recipes_exist.stat.exists | default(false))
+             or (current_git_rev.stdout | default('') != openchami_v22_git_version) }}
+
+    - name: Display recipe persistence status
+      ansible.builtin.debug:
+        msg:
+          - "Recipes exist at core path: {{ recipes_exist.stat.exists | default(false) }}"
+          - "Current revision: {{ current_git_rev.stdout | default('N/A') }}"
+          - "Target revision: {{ openchami_v22_git_version }}"
+          - "Update needed: {{ recipes_update_needed }}"
+
+    - name: Update deployment-recipes to v2.2
+      when: recipes_update_needed | bool
+      block:
+
+        - name: Remove stale v2.1 deployment-recipes (backup already taken)
+          ansible.builtin.file:
+            path: "{{ openchami_clone_path }}"
+            state: absent
+          delegate_to: oim
+          connection: ssh
+
+        - name: Ensure parent directory exists
+          ansible.builtin.file:
+            path: "{{ openchami_clone_path | dirname }}"
+            state: directory
+            mode: "{{ dir_permissions_755 }}"
+          delegate_to: oim
+          connection: ssh
+
+        - name: Clone v2.2 deployment-recipes at pinned commit
+          ansible.builtin.git:
+            repo: "{{ openchami_git_repo }}"
+            dest: "{{ openchami_clone_path }}"
+            version: "{{ openchami_v22_git_version }}"
+          register: clone_v22
+          retries: 5
+          delay: 10
+          until: clone_v22 is not failed
+          delegate_to: oim
+          connection: ssh
+
+        - name: Verify v2.2 recipes cloned successfully
+          ansible.builtin.stat:
+            path: "{{ openchami_clone_path }}/dell/podman-quadlets/roles/configs/templates/coredns/Corefile.j2"
+          register: v22_corefile_template
+          delegate_to: oim
+          connection: ssh
+
+        - name: FAIL if v2.2 Corefile template not present (key v2.2 indicator)
+          ansible.builtin.fail:
+            msg: >
+              v2.2 deployment-recipes clone failed — Corefile.j2 template not found.
+              Expected at: {{ openchami_clone_path }}/dell/podman-quadlets/roles/configs/templates/coredns/Corefile.j2
+          when: not v22_corefile_template.stat.exists
+
+    # Re-template inventory and configs.yaml so deploy_openchami finds them
+    - name: Read existing configs_vars for cluster metadata
+      ansible.builtin.slurp:
+        src: "{{ openchami_config_vars_path }}"
+      register: existing_configs_vars
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Preserve existing inventory file
+      ansible.builtin.shell: |
+        if [ -f "{{ openchami_recipes_backup_dir }}/deployment-recipes.bak/dell/podman-quadlets/inventory/01-ochami" ]; then
+          cp "{{ openchami_recipes_backup_dir }}/deployment-recipes.bak/dell/podman-quadlets/inventory/01-ochami" \
+             "{{ openchami_clone_path }}/dell/podman-quadlets/inventory/01-ochami"
+          echo "RESTORED: inventory from backup"
+        else
+          echo "SKIP: no backup inventory found, using default"
+        fi
+      register: inventory_restore
+      changed_when: "'RESTORED' in inventory_restore.stdout"
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display recipe persistence success
+      ansible.builtin.debug:
+        msg:
+          - "v2.2 deployment-recipes persisted at: {{ openchami_clone_path }}"
+          - "Git version: {{ openchami_v22_git_version }}"
+
+    # ====================================================================
+    # Phase H2 — Upgrade OpenCHAMI and ochami RPMs
+    # WHY: v2.2 uses openchami-0.1.2 and ochami-0.7.1 (v2.1 had 0.0.31/0.5.3)
+    # ====================================================================
+
+    - name: Check current openchami RPM version
+      ansible.builtin.command: rpm -q openchami
+      register: current_openchami_rpm
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Upgrade openchami RPM to v2.2
+      when: "'0.1.2' not in (current_openchami_rpm.stdout | default(''))"
+      block:
+        - name: Download v2.2 openchami RPM
+          ansible.builtin.get_url:
+            url: "{{ openchami_v22_rpm_url }}"
+            dest: "/tmp/{{ openchami_v22_rpm_name }}"
+            mode: "0755"
+          register: download_openchami
+          retries: 3
+          delay: 10
+          until: download_openchami is not failed
+          delegate_to: oim
+          connection: ssh
+
+        - name: Install v2.2 openchami RPM
+          ansible.builtin.dnf:
+            name: "/tmp/{{ openchami_v22_rpm_name }}"
+            state: present
+            disable_gpg_check: true
+          delegate_to: oim
+          connection: ssh
+
+    - name: Check current ochami client RPM version
+      ansible.builtin.command: rpm -q ochami
+      register: current_ochami_rpm
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Upgrade ochami client RPM to v2.2
+      when: "'0.7.1' not in (current_ochami_rpm.stdout | default(''))"
+      block:
+        - name: Download v2.2 ochami client RPM
+          ansible.builtin.get_url:
+            url: "{{ ochami_v22_client_rpm_url }}"
+            dest: "/tmp/{{ ochami_v22_client_rpm_name }}"
+            mode: "0755"
+          register: download_ochami
+          retries: 3
+          delay: 10
+          until: download_ochami is not failed
+          delegate_to: oim
+          connection: ssh
+
+        - name: Install v2.2 ochami client RPM
+          ansible.builtin.dnf:
+            name: "/tmp/{{ ochami_v22_client_rpm_name }}"
+            state: present
+            disable_gpg_check: true
+          delegate_to: oim
+          connection: ssh
+
+    # ====================================================================
+    # Phase H3 — Prune stale containers and dangling images
+    # WHY: v2.1 containers were removed in Phase D but exited containers
+    # and dangling images may remain. Prune safely without touching volumes.
+    # ====================================================================
+
+    - name: Prune exited containers older than {{ openchami_prune_age }}
+      ansible.builtin.command: podman container prune -f --filter "until={{ openchami_prune_age }}"
+      register: container_prune
+      changed_when: container_prune.stdout | trim | length > 0
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Prune dangling images
+      ansible.builtin.command: podman image prune -f
+      register: image_prune
+      changed_when: image_prune.stdout | trim | length > 0
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display prune results
+      ansible.builtin.debug:
+        msg:
+          - "Container prune: {{ container_prune.stdout_lines | default([]) }}"
+          - "Image prune: {{ image_prune.stdout_lines | default([]) }}"
+      when: container_prune.stdout | default('') | trim | length > 0 or image_prune.stdout | default('') | trim | length > 0
+
+    # ====================================================================
+    # Phase H4 — Write version metadata
+    # WHY: Provides a machine-readable record of the upgrade for future
+    # operations, rollback decisions, and audit.
+    # ====================================================================
+
+    - name: Ensure data directory exists
+      ansible.builtin.file:
+        path: "{{ openchami_version_metadata_path | dirname }}"
+        state: directory
+        mode: "{{ dir_permissions_755 }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Write version metadata
+      ansible.builtin.copy:
+        content: |
+          {
+            "component": "openchami",
+            "version": "{{ openchami_target_version }}",
+            "upgraded_from": "{{ openchami_source_version }}",
+            "upgrade_timestamp": "{{ ansible_date_time.iso8601 }}",
+            "git_version": "{{ openchami_v22_git_version }}",
+            "recipes_path": "{{ openchami_clone_path }}",
+            "openchami_rpm": "{{ openchami_v22_rpm_name }}",
+            "ochami_rpm": "{{ ochami_v22_client_rpm_name }}",
+            "image_tags": {
+              "local_ca": "{{ openchami_local_ca_tag }}",
+              "opaal": "{{ openchami_opaal_tag }}",
+              "smd": "{{ openchami_smd_tag }}",
+              "bss": "{{ openchami_bss_tag }}",
+              "cloud_init": "{{ openchami_cloud_init_tag }}",
+              "coresmd": "{{ openchami_coresmd_tag }}",
+              "postgres": "{{ postgres_tag }}",
+              "hydra": "{{ hydra_tag }}",
+              "minio": "{{ minio_release_tag }}",
+              "registry": "{{ registry_tag }}",
+              "acme": "{{ acme_tag }}"
+            }
+          }
+        dest: "{{ openchami_version_metadata_path }}"
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display persistence phase success
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "PERSISTENCE PHASE: COMPLETE"
+          - "========================================="
+          - ""
+          - "Deployment recipes: {{ openchami_clone_path }} (v2.2 @ {{ openchami_v22_git_version[:12] }})"
+          - "OpenCHAMI RPM: {{ openchami_v22_rpm_name }}"
+          - "Ochami client RPM: {{ ochami_v22_client_rpm_name }}"
+          - "Version metadata: {{ openchami_version_metadata_path }}"
+          - "Stale containers pruned"
+
+  rescue:
+    - name: Persistence phase failed (non-fatal warning)
+      ansible.builtin.debug:
+        msg:
+          - "WARNING: Recipe persistence phase encountered errors."
+          - "The container upgrade itself succeeded. Recipe persistence can be retried."
+          - "Run the upgrade playbook again to retry persistence."
+      # Non-fatal: container upgrade already succeeded, persistence is a bonus

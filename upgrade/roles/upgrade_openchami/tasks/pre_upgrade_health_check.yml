@@ -13,25 +13,118 @@
 # limitations under the License.
 ---
 
+# ===========================================================================
+# Pre-upgrade health check — FAIL FAST if any v2.1 service is unhealthy.
+# Checks: container running state, postgres, SMD API, BSS API, coresmd DHCP.
+# NOTE: Checks for SINGLE 'coresmd' container (v2.1), not the split services.
+#
+# DESIGN DECISION: Uses dynamic container IP discovery instead of admin_nic_ip.
+# WHY: Eliminates undefined variable dependency and uses direct HTTP to containers.
+# PROTOCOL: HTTP only (HTTPS to container IPs fails with SSL packet length error).
+# ===========================================================================
+
 - name: Pre-upgrade health check
+  tags: [openchami, upgrade, healthcheck]
   block:
-    - name: Verify all OpenCHAMI containers are running
-      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
-      loop: "{{ openchami_critical_containers }}"
+
+    # ---- 1. Verify critical containers are running (v2.1) -----------------
+    - name: Verify all critical OpenCHAMI containers are running (v2.1)
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman ps --filter "name=^{{ item }}$" --format '{% raw %}{{.Names}}{% endraw %}'
+      loop: "{{ openchami_v21_critical_containers }}"
       register: container_check
       changed_when: false
-      failed_when: container_check.stdout | length == 0
+      failed_when: item not in (container_check.stdout | default(''))
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
+    # ---- 2. PostgreSQL connectivity --------------------------------------
     - name: Check postgres database connectivity
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres pg_isready
+        podman exec postgres pg_isready -U ochami
       register: postgres_check
       changed_when: false
       failed_when: postgres_check.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 3. Discover SMD container IP ------------------------------------
+    - name: Get SMD container IP
+      ansible.builtin.include_tasks: get_container_ip.yml
+      vars:
+        container_name: "{{ openchami_smd_container }}"
+
+    # ---- 4. SMD API health checks ----------------------------------------
+    - name: Check SMD State/Components endpoint
+      ansible.builtin.uri:
+        url: "http://{{ smd_ip }}:{{ openchami_smd_port }}{{ openchami_smd_components_path }}"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 15
+      register: smd_components_result
+      retries: 3
+      delay: 5
+      until: smd_components_result.status == 200
+      failed_when:
+        - smd_components_result.status != 200
+      delegate_to: oim
+      connection: ssh
+      tags: [openchami, healthcheck, preupgrade, smd]
+
+    - name: Check SMD service ready endpoint
+      ansible.builtin.uri:
+        url: "http://{{ smd_ip }}:{{ openchami_smd_port }}{{ openchami_smd_ready_path }}"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 15
+      register: smd_ready_result
+      retries: 3
+      delay: 5
+      until: smd_ready_result.status == 200
+      failed_when:
+        - smd_ready_result.status != 200
+        - "'HSM is healthy' not in (smd_ready_result.content | default(''))"
+      delegate_to: oim
+      connection: ssh
+      tags: [openchami, healthcheck, preupgrade, smd]
+
+    # ---- 5. Discover BSS container IP ------------------------------------
+    - name: Get BSS container IP
+      ansible.builtin.include_tasks: get_container_ip.yml
+      vars:
+        container_name: "{{ openchami_bss_container }}"
+
+    # ---- 6. BSS API health check -----------------------------------------
+    - name: Check BSS service status endpoint
+      ansible.builtin.uri:
+        url: "http://{{ bss_ip }}:{{ openchami_bss_port }}{{ openchami_bss_status_path }}"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 15
+      register: bss_status_result
+      retries: 3
+      delay: 5
+      until: bss_status_result.status == 200
+      failed_when:
+        - bss_status_result.status != 200
+        - "'running' not in (bss_status_result.content | default(''))"
+      delegate_to: oim
+      connection: ssh
+      tags: [openchami, healthcheck, preupgrade, bss]
+
+    # ---- 7. coresmd DHCP port listening ----------------------------------
+    - name: Check coresmd is listening on DHCP port 67
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -ulnp | grep ':67 ' || echo "DHCP_PORT_NOT_FOUND"
+      register: coresmd_dhcp_check
+      changed_when: false
+      failed_when: "'DHCP_PORT_NOT_FOUND' in coresmd_dhcp_check.stdout"
       delegate_to: oim
       connection: ssh
 
@@ -40,6 +133,47 @@
         msg: "{{ upgrade_messages.health_check.pre_check_success }}"
 
   rescue:
+    - name: Collect failed container diagnostics
+      ansible.builtin.shell: |
+        echo "=== podman ps -a ==="
+        podman ps -a --format 'table {% raw %}{{.Names}}\t{{.Status}}\t{{.Image}}{% endraw %}'
+        echo "=== systemctl status openchami.target ==="
+        systemctl status openchami.target --no-pager || true
+      register: diagnostics
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display diagnostics
+      ansible.builtin.debug:
+        msg: "{{ diagnostics.stdout_lines }}"
+      when: diagnostics.stdout_lines is defined
+
     - name: Pre-upgrade health check failed
       ansible.builtin.fail:
-        msg: "{{ upgrade_messages.health_check.pre_check_failure }} {{ upgrade_messages.troubleshooting.pre_check_diagnosis }}"
+        msg: |
+          Pre-upgrade health check FAILED.
+          
+          {{ upgrade_messages.health_check.pre_check_failure | default('One or more OpenCHAMI services are not healthy.') }}
+          
+          Troubleshooting steps:
+            1. Check container status:
+               podman ps -a | grep -E '(smd|bss|postgres|coresmd|haproxy)'
+            
+            2. Check container logs:
+               podman logs smd
+               podman logs bss
+            
+            3. Verify container IPs:
+               podman inspect smd | grep -A2 IPAddress
+               podman inspect bss | grep -A2 IPAddress
+            
+            4. Test endpoints manually:
+               curl http://<smd_ip>:27779/hsm/v2/service/ready
+               curl http://<bss_ip>:27778/boot/v1/service/status
+            
+            5. Check systemd status:
+               systemctl status openchami.target
+          
+          {{ upgrade_messages.troubleshooting.pre_check_diagnosis | default('') }}

@@ -13,73 +13,392 @@
 # limitations under the License.
 ---
 
+# ===========================================================================
+# Upgrade OpenCHAMI containers from v2.1 → v2.2
+# ===========================================================================
+# ATOMIC SEQUENCE — fixes the restart loop observed in the debug log.
+# ROOT CAUSE: Previous flow deployed quadlets while target was running,
+#   triggered multiple daemon-reloads, and used fixed-sleep stabilization.
+#   Result: services SIGTERM'd every ~14 seconds (exit code 143).
+#
+# THIS FIX:
+#   Phase A — Pre-flight & config deployment  (target STILL RUNNING)
+#   Phase B — Pull all images                 (target STILL RUNNING)
+#   Phase C — ATOMIC STOP                     (ONE stop, wait for exit)
+#   Phase D — Apply all changes               (target STOPPED)
+#   Phase E — ATOMIC START                    (ONE daemon-reload + start)
+#   Phase F — Stabilization                   (until/retries, NOT pause)
+#   Phase G — Verification                    (podman inspect, SELinux, loop check)
+# ===========================================================================
+
 - name: Upgrade OpenCHAMI containers
+  tags: [openchami, upgrade]
   block:
-    - name: Pull new OpenCHAMI container images
+
+    # ====================================================================
+    # Phase A — Pre-flight & Config Deployment (target still running)
+    # WHY before stop: configs and network detection don't affect running
+    # services. Having them ready avoids delays during the stopped window.
+    # ====================================================================
+
+    - name: Verify CA trust bundle exists
+      ansible.builtin.stat:
+        path: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+      register: ca_bundle
+      delegate_to: oim
+      connection: ssh
+      failed_when: not ca_bundle.stat.exists
+
+    - name: Ensure OpenCHAMI config directory exists
+      ansible.builtin.file:
+        path: /etc/openchami/configs
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      delegate_to: oim
+      connection: ssh
+
+    # Auto-detect cluster boot interface and IP (eliminates admin_nic_ip)
+    - name: Gather network facts for interface auto-detection
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      delegate_to: oim
+      connection: ssh
+
+    - name: Auto-detect cluster boot interface from default route
+      ansible.builtin.set_fact:
+        detected_cluster_boot_interface: "{{ ansible_default_ipv4.interface }}"
+        detected_cluster_boot_ip: "{{ ansible_default_ipv4.address }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Validate detected interface is not a Podman bridge
+      ansible.builtin.assert:
+        that:
+          - detected_cluster_boot_interface is defined
+          - detected_cluster_boot_interface | length > 0
+          - not (detected_cluster_boot_interface is match('^(podman|cni-|br-|veth)'))
+        fail_msg: >
+          Detected interface '{{ detected_cluster_boot_interface }}' looks like a Podman bridge.
+          CoreDNS must bind to the host's external interface, not a Podman virtual interface.
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display auto-detected cluster boot configuration
+      ansible.builtin.debug:
+        msg:
+          - "Auto-detected cluster boot interface: {{ detected_cluster_boot_interface }}"
+          - "Auto-detected cluster boot IP: {{ detected_cluster_boot_ip }}"
+
+    # Deploy config files BEFORE stopping services
+    - name: Deploy CoreDNS Corefile with auto-detected IP binding
+      ansible.builtin.template:
+        src: Corefile.j2
+        dest: /etc/openchami/configs/Corefile
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify deployed Corefile contains NO admin_nic_ip references
+      ansible.builtin.shell: |
+        grep -v "^[[:space:]]*#" /etc/openchami/configs/Corefile | grep "admin_nic_ip" && exit 1 || echo "CLEAN"
+      register: corefile_admin_audit
+      changed_when: false
+      failed_when: corefile_admin_audit.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Deploy CoreDHCP config
+      ansible.builtin.template:
+        src: coredhcp.yaml.j2
+        dest: /etc/openchami/configs/coredhcp.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      connection: ssh
+
+    # ====================================================================
+    # Phase B — Pull All Images (target still running, no downtime)
+    # ====================================================================
+
+    - name: Force pull coresmd image (new for v2.2 split)
+      containers.podman.podman_image:
+        name: "ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}"
+        force: yes
+        pull: yes
+      delegate_to: oim
+      connection: ssh
+
+    - name: Force pull images that changed registries or need cache defeat
+      containers.podman.podman_image:
+        name: "{{ item }}"
+        force: yes
+        pull: yes
+      loop:
+        - "docker.io/pgsty/minio:{{ minio_release_tag }}"
+        - "docker.io/library/registry:{{ registry_tag }}"
+        - "cgr.dev/chainguard/haproxy:{{ haproxy_tag }}"
+        - "cgr.dev/chainguard/curl:{{ curl_tag }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Pull all OpenCHAMI target images
       ansible.builtin.command: podman pull {{ item.image }}
       loop: "{{ openchami_target_images }}"
       register: pull_result
       retries: 3
       delay: 10
       until: pull_result.rc == 0
-      changed_when: true
+      changed_when: "'Already exists' not in pull_result.stdout | default('')"
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: Update systemd quadlet files
-      ansible.builtin.include_tasks: update_systemd_quadlets.yml
+    # ====================================================================
+    # Phase C — ATOMIC STOP (ONE stop, no further stops after this)
+    # WHY: Multiple stop/start cycles caused the restart loop observed in
+    # the debug log — services SIGTERM'd every ~14 seconds.
+    # ====================================================================
 
-    - name: Stop OpenCHAMI services
+    - name: Stop OpenCHAMI target (ONCE — no further stops after this)
       ansible.builtin.systemd:
         name: openchami.target
         state: stopped
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
+      failed_when: false
 
-    - name: Wait for containers to stop
-      ansible.builtin.pause:
-        seconds: 10
-
-    - name: Remove old OpenCHAMI containers (preserve volumes)
-      ansible.builtin.command: podman rm -f {{ item.container }}
-      loop: "{{ openchami_containers }}"
-      register: remove_result
-      changed_when: true
+    - name: Wait for all containers to fully exit
+      ansible.builtin.shell: |
+        remaining=$(podman ps --format '{% raw %}{{.Names}}{% endraw %}' 2>/dev/null | \
+          grep -cE '^(smd|bss|haproxy|cloud-init-server|coresmd|postgres|hydra|opaal|step-ca|registry|minio)' || true)
+        echo "remaining=$remaining"
+        [ "$remaining" -eq 0 ]
+      register: containers_stopped
+      retries: 12
+      delay: 5
+      until: containers_stopped.rc == 0
+      changed_when: false
       failed_when: false
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: Reload systemd daemon
+    # ====================================================================
+    # Phase D — Apply All Changes (target STOPPED, safe for mutations)
+    # ====================================================================
+
+    - name: Remove old OpenCHAMI containers (preserve volumes)
+      ansible.builtin.command: podman rm -f {{ item }}
+      loop: "{{ openchami_all_containers }}"
+      register: remove_result
+      changed_when: remove_result.rc == 0
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    # WHY: Previous :Z mounts left stale MCS labels on the CA bundle.
+    # restorecon resets to default SELinux type so the new :z mounts work.
+    - name: Restore SELinux context on CA trust bundle
+      ansible.builtin.command: restorecon -v /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Remove deprecated coresmd.container quadlet
+      ansible.builtin.file:
+        path: "{{ openchami_quadlet_dir }}/coresmd.container"
+        state: absent
+      delegate_to: oim
+      connection: ssh
+
+    # Deploy new split quadlets (with SELinux :z fix on CA bundle)
+    - name: Deploy coresmd-coredhcp quadlet (SELinux :z on shared CA bundle)
+      ansible.builtin.template:
+        src: coresmd-coredhcp.container.j2
+        dest: "{{ openchami_quadlet_dir }}/coresmd-coredhcp.container"
+        owner: root
+        group: root
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Deploy coresmd-coredns quadlet (SELinux :z on shared CA bundle)
+      ansible.builtin.template:
+        src: coresmd-coredns.container.j2
+        dest: "{{ openchami_quadlet_dir }}/coresmd-coredns.container"
+        owner: root
+        group: root
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    # Update image tags in ALL existing quadlet files
+    - name: Update systemd quadlet files
+      ansible.builtin.include_tasks: update_systemd_quadlets.yml
+
+    # Update openchami.target to reference split services
+    - name: Read current openchami.target
+      ansible.builtin.slurp:
+        src: "{{ openchami_systemd_dir }}/openchami.target"
+      register: openchami_target_content
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Update openchami.target — replace coresmd.service with split services
+      ansible.builtin.replace:
+        path: "{{ openchami_systemd_dir }}/openchami.target"
+        regexp: 'coresmd\.service'
+        replace: 'coresmd-coredhcp.service coresmd-coredns.service'
+      delegate_to: oim
+      connection: ssh
+      when:
+        - openchami_target_content is not failed
+        - "'coresmd.service' in (openchami_target_content.content | default('') | b64decode)"
+
+    # Clear any previously failed service states before starting
+    - name: Reset failed systemd unit states
+      ansible.builtin.command: systemctl reset-failed
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    # ====================================================================
+    # Phase E — ATOMIC START (ONE daemon-reload + ONE start)
+    # ====================================================================
+
+    - name: Reload systemd daemon (regenerate .service units from quadlets)
       ansible.builtin.systemd:
         daemon_reload: true
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: Start OpenCHAMI services with new images
+    - name: Start OpenCHAMI target (all services start in dependency order)
       ansible.builtin.systemd:
         name: openchami.target
         state: started
         enabled: true
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: Wait for services to stabilize
-      ansible.builtin.pause:
-        seconds: 30
+    # ====================================================================
+    # Phase F — Stabilization (until/retries/delay, NOT fixed pause)
+    # WHY: Fixed pause (30s) was insufficient. until/retries gives up to
+    # 120s but succeeds early when services are ready.
+    # ====================================================================
 
-    - name: Verify all containers are running
-      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
-      loop: "{{ openchami_critical_containers }}"
-      register: verify_running
+    - name: Wait for openchami.target to be active
+      ansible.builtin.command: systemctl is-active openchami.target
+      register: target_active
+      retries: 20
+      delay: 6
+      until: target_active.rc == 0
       changed_when: false
-      failed_when: verify_running.stdout | length == 0
+      failed_when: false
       delegate_to: oim
-      delegate_facts: true
+      connection: ssh
+
+    - name: Wait for critical containers to exist
+      ansible.builtin.command: podman container exists {{ item }}
+      loop: "{{ openchami_v22_critical_containers }}"
+      register: container_exists
+      retries: 20
+      delay: 6
+      until: container_exists.rc == 0
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    # ====================================================================
+    # Phase G — Verification
+    # ====================================================================
+
+    - name: Verify critical containers are running after upgrade
+      ansible.builtin.shell: |
+        state=$(podman inspect {{ item }} --format '{% raw %}{{.State.Status}}{% endraw %}' 2>/dev/null || echo "missing")
+        echo "{{ item }}=$state"
+        [ "$state" = "running" ]
+      loop: "{{ openchami_v22_critical_containers }}"
+      register: verify_running
+      retries: 10
+      delay: 6
+      until: verify_running.rc == 0
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify coresmd services are active
+      ansible.builtin.command: systemctl is-active {{ item }}
+      register: coresmd_active
+      changed_when: false
+      failed_when: coresmd_active.stdout != "active"
+      loop:
+        - coresmd-coredhcp.service
+        - coresmd-coredns.service
+      delegate_to: oim
+      connection: ssh
+
+    # WHY: The debug log showed 50+ AVC denials for coredhcp/coredns reading
+    # tls-ca-bundle.pem due to :Z (private relabel). After the :z fix, there
+    # should be ZERO denials. This check confirms the SELinux fix worked.
+    - name: Check for SELinux AVC denials on coresmd containers
+      ansible.builtin.shell: |
+        count=$(ausearch -m AVC -ts recent 2>/dev/null | grep -cE 'coredhcp|coredns' || echo "0")
+        echo "selinux_avc_denials=$count"
+        [ "$count" -eq 0 ]
+      register: selinux_denials
+      changed_when: false
+      failed_when: selinux_denials.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    # WHY: The debug log showed openchami.target cycling every ~14 seconds.
+    # After the atomic fix, the target should reach steady state with at
+    # most 2 events (one Reached + one possible initial Stopped).
+    - name: Check for restart loop (target should not cycle)
+      ansible.builtin.shell: |
+        count=$(journalctl -u openchami.target --since '2 minutes ago' --no-pager 2>/dev/null | \
+          grep -cE 'Stopped|Reached' || echo "0")
+        echo "target_cycle_count=$count"
+        [ "$count" -le 4 ]
+      register: restart_loop_check
+      changed_when: false
+      failed_when: restart_loop_check.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify no services in failed state
+      ansible.builtin.shell: |
+        failed=$(systemctl list-units --state=failed --no-pager --no-legend 2>/dev/null | \
+          grep -cE 'openchami|coresmd|haproxy|cloud-init|smd|bss|postgres|hydra|opaal|step-ca' || echo "0")
+        echo "failed_services=$failed"
+        [ "$failed" -eq 0 ]
+      register: failed_services
+      changed_when: false
+      failed_when: failed_services.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    # WHY exclude haproxy and hydra-gen-jwks: haproxy intentionally uses
+    # :latest (no pinned version). hydra-gen-jwks uses the curl image which
+    # is also :latest.
+    # WHY exclude minio-server, registry, pulp, omnia_core: These are NOT part
+    # of openchami.target — they're managed separately by omnia.target.
+    - name: Verify no unexpected containers running with :latest tag
+      ansible.builtin.shell: |
+        podman ps --format "{% raw %}{{.Names}} {{.Image}}{% endraw %}" | \
+          grep ":latest" | grep -vE "^(haproxy|hydra-gen-jwks|minio-server|registry|pulp|omnia_core) " || true
+      register: latest_containers
+      changed_when: false
+      failed_when: latest_containers.stdout | trim | length > 0
+      delegate_to: oim
       connection: ssh
 
     - name: Display container upgrade success
@@ -87,6 +406,56 @@
         msg: "{{ upgrade_messages.container_upgrade.success }}"
 
   rescue:
+    - name: Collect upgrade failure diagnostics
+      ansible.builtin.shell: |
+        echo "=== podman ps -a ==="
+        podman ps -a --format 'table {% raw %}{{.Names}}\t{{.Status}}\t{{.Image}}{% endraw %}'
+        echo ""
+        echo "=== systemctl list-dependencies openchami.target ==="
+        systemctl list-dependencies openchami.target --no-pager || true
+        echo ""
+        echo "=== journalctl -u openchami.target --no-pager -n 30 ==="
+        journalctl -u openchami.target --no-pager -n 30 || true
+        echo ""
+        echo "=== SELinux AVC denials (coresmd) ==="
+        ausearch -m AVC -ts recent 2>/dev/null | grep -E 'coredhcp|coredns' | tail -10 || echo "(none)"
+        echo ""
+        echo "=== cloud-init-server.container quadlet ==="
+        cat {{ openchami_quadlet_dir }}/cloud-init-server.container 2>/dev/null || echo "(not found)"
+        echo ""
+        echo "=== coresmd-coredhcp.container quadlet ==="
+        cat {{ openchami_quadlet_dir }}/coresmd-coredhcp.container 2>/dev/null || echo "(not found)"
+        echo ""
+        echo "=== journalctl -u cloud-init-server.service -n 30 ==="
+        journalctl -u cloud-init-server.service --no-pager -n 30 2>/dev/null || echo "(no logs)"
+        echo ""
+        echo "=== journalctl -u coresmd-coredhcp.service -n 30 ==="
+        journalctl -u coresmd-coredhcp.service --no-pager -n 30 2>/dev/null || echo "(no logs)"
+        echo ""
+        echo "=== /etc/openchami/configs/coredhcp.yaml ==="
+        cat /etc/openchami/configs/coredhcp.yaml 2>/dev/null || echo "(not found)"
+        echo ""
+        echo "=== coresmd-coredhcp logs ==="
+        podman logs coresmd-coredhcp --tail 20 2>&1 || echo "(not running)"
+        echo ""
+        echo "=== coresmd-coredns logs ==="
+        podman logs coresmd-coredns --tail 20 2>&1 || echo "(not running)"
+        echo ""
+        echo "=== cloud-init-server logs ==="
+        podman logs cloud-init-server --tail 20 2>&1 || echo "(not running)"
+        echo ""
+        echo "=== haproxy logs ==="
+        podman logs haproxy --tail 20 2>&1 || echo "(not running)"
+      register: upgrade_diagnostics
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display upgrade failure diagnostics
+      ansible.builtin.debug:
+        msg: "{{ upgrade_diagnostics.stdout_lines | default([]) }}"
+
     - name: Container upgrade failed
       ansible.builtin.fail:
-        msg: "{{ upgrade_messages.container_upgrade.failure }} {{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}"
+        msg: "{{ upgrade_messages.container_upgrade.failure }}\n{{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}"

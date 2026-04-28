@@ -1,0 +1,173 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Diagnostic playbook for coresmd-coredhcp and coresmd-coredns failures
+# READ-ONLY tasks for systematic diagnosis
+# ===========================================================================
+
+- name: Diagnose coresmd service failures
+  tags: [openchami, upgrade, diagnostics]
+  block:
+
+    - name: Capture coresmd-coredhcp service status
+      ansible.builtin.command: systemctl status coresmd-coredhcp.service --no-pager -l
+      register: coredhcp_status
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Capture coresmd-coredns service status
+      ansible.builtin.command: systemctl status coresmd-coredns.service --no-pager -l
+      register: coredns_status
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Capture coresmd-coredhcp journal logs (last 100 lines)
+      ansible.builtin.command: journalctl -u coresmd-coredhcp.service --no-pager -n 100
+      register: coredhcp_journal
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Capture coresmd-coredns journal logs (last 100 lines)
+      ansible.builtin.command: journalctl -u coresmd-coredns.service --no-pager -n 100
+      register: coredns_journal
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify Quadlet files exist
+      ansible.builtin.stat:
+        path: "/etc/containers/systemd/{{ item }}"
+      register: quadlet_check
+      loop:
+        - coresmd-coredhcp.container
+        - coresmd-coredns.container
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify required config files exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: config_check
+      loop:
+        - /etc/openchami/configs/Corefile
+        - /etc/openchami/configs/coredhcp.yaml
+        - /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify coresmd image is present in local Podman store
+      ansible.builtin.command: podman image exists ghcr.io/openchami/coresmd:v0.4.0
+      register: image_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check SELinux AVC denials related to coresmd
+      ansible.builtin.shell: ausearch -m AVC -ts recent 2>/dev/null | grep -E "coresmd|coredhcp|coredns" || echo "No recent AVC denials"
+      register: selinux_denials
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check port 67 (DHCP) and 53 (DNS) listeners
+      ansible.builtin.shell: |
+        echo "=== Port 67 (DHCP) ==="
+        ss -ulnp | grep ':67 ' || echo "Port 67 not bound"
+        echo "=== Port 53 (DNS) ==="
+        ss -ulnp | grep ':53 ' || echo "Port 53 not bound"
+      register: port_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify haproxy.service is active (required dependency)
+      ansible.builtin.command: systemctl is-active haproxy.service
+      register: haproxy_active
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check for containers still using :latest tags
+      ansible.builtin.shell: |
+        podman ps --format "{{.Names}} {{.Image}}" | grep ":latest" || echo "No :latest tags found"
+      register: latest_tags_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check omnia.target dependency tree
+      ansible.builtin.command: systemctl list-dependencies omnia.target --no-pager
+      register: omnia_target_deps
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display all diagnostics
+      ansible.builtin.debug:
+        msg:
+          - "============================================================"
+          - "=== CORESMD-COREDHCP STATUS ==="
+          - "{{ coredhcp_status.stdout_lines }}"
+          - ""
+          - "=== CORESMD-COREDNS STATUS ==="
+          - "{{ coredns_status.stdout_lines }}"
+          - ""
+          - "=== CORESMD-COREDHCP JOURNAL ==="
+          - "{{ coredhcp_journal.stdout_lines }}"
+          - ""
+          - "=== CORESMD-COREDNS JOURNAL ==="
+          - "{{ coredns_journal.stdout_lines }}"
+          - ""
+          - "=== QUADLET FILES EXIST ==="
+          - "coresmd-coredhcp.container: {{ quadlet_check.results[0].stat.exists }}"
+          - "coresmd-coredns.container: {{ quadlet_check.results[1].stat.exists }}"
+          - ""
+          - "=== CONFIG FILES EXIST ==="
+          - "Corefile: {{ config_check.results[0].stat.exists }}"
+          - "coredhcp.yaml: {{ config_check.results[1].stat.exists }}"
+          - "CA bundle: {{ config_check.results[2].stat.exists }}"
+          - ""
+          - "=== CORESMD:V0.4.0 IMAGE PRESENT ==="
+          - "rc={{ image_check.rc }} (0=present, 125=not found)"
+          - ""
+          - "=== SELINUX AVC DENIALS ==="
+          - "{{ selinux_denials.stdout_lines }}"
+          - ""
+          - "=== PORT STATUS ==="
+          - "{{ port_check.stdout_lines }}"
+          - ""
+          - "=== HAPROXY ACTIVE ==="
+          - "{{ haproxy_active.stdout }}"
+          - ""
+          - "=== CONTAINERS WITH :LATEST TAGS ==="
+          - "{{ latest_tags_check.stdout_lines }}"
+          - ""
+          - "=== OMNIA.TARGET DEPENDENCY TREE ==="
+          - "{{ omnia_target_deps.stdout_lines }}"
+          - "============================================================"

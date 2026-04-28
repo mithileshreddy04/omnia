@@ -44,7 +44,7 @@
 
 - name: "load — Set upgrade metadata facts from oim_metadata.yml"
   ansible.builtin.set_fact:
-    upgrade_source_version: "{{ oim_metadata.omnia_previous_version }}"
+    upgrade_source_version: "{{ oim_metadata.omnia_previous_version | default('2.1.0.0') }}"
     upgrade_target_version: "{{ oim_metadata.omnia_version }}"
     upgrade_id: "{{ lookup('pipe', 'date +%Y%m%d_%H%M%S') }}_{{ 99999 | random }}"
 

@@ -1,0 +1,250 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Diagnostic Differential Analysis: Fresh v2.2 Deploy vs Upgrade
+# ===========================================================================
+# PURPOSE: Identify configuration drift between fresh deployment and upgrade
+# WHY: Fresh deploy succeeds, upgrade fails — this finds the delta
+# CRITICAL: This is a READ-ONLY diagnostic — makes NO changes to the system
+# ===========================================================================
+
+- name: Diagnostic differential analysis
+  tags: [openchami, upgrade, diagnostics, diff]
+  block:
+
+    # ---- A. Quadlet inventory comparison ---------------------------------
+    - name: Capture current Quadlet files on target system
+      ansible.builtin.find:
+        paths: /etc/containers/systemd/
+        patterns: "*.container"
+        recurse: no
+      register: current_quadlets
+      delegate_to: oim
+      connection: ssh
+
+    - name: Capture canonical v2.2 Quadlets from deployment-recipes
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../../deployment-recipes/dell/podman-quadlets/roles/"
+        patterns: "*.container.j2"
+        recurse: yes
+      register: canonical_quadlet_templates
+      delegate_to: localhost
+
+    - name: Display Quadlet file inventory
+      ansible.builtin.debug:
+        msg:
+          - "=== CURRENT QUADLETS ON SYSTEM ==="
+          - "{{ current_quadlets.files | map(attribute='path') | list }}"
+          - "=== CANONICAL v2.2 TEMPLATES ==="
+          - "{{ canonical_quadlet_templates.files | map(attribute='path') | list }}"
+
+    # ---- B. Corefile diff (likely root cause of port 53 conflict) -------
+    - name: Check if current Corefile exists
+      ansible.builtin.stat:
+        path: /etc/openchami/configs/Corefile
+      register: current_corefile_stat
+      delegate_to: oim
+      connection: ssh
+
+    - name: Read current Corefile
+      ansible.builtin.slurp:
+        path: /etc/openchami/configs/Corefile
+      register: current_corefile_content
+      when: current_corefile_stat.stat.exists
+      delegate_to: oim
+      connection: ssh
+
+    - name: Read canonical Corefile template
+      ansible.builtin.slurp:
+        path: "{{ playbook_dir }}/../../../deployment-recipes/dell/podman-quadlets/roles/configs/templates/coredns/Corefile.j2"
+      register: canonical_corefile_content
+      delegate_to: localhost
+
+    - name: Display Corefile comparison
+      ansible.builtin.debug:
+        msg:
+          - "=== CURRENT COREFILE (deployed) ==="
+          - "{{ (current_corefile_content.content | b64decode).split('\n') if current_corefile_stat.stat.exists else ['FILE NOT FOUND'] }}"
+          - "=== CANONICAL COREFILE TEMPLATE (v2.2) ==="
+          - "{{ (canonical_corefile_content.content | b64decode).split('\n') }}"
+
+    # ---- C. Audit current Corefile for admin_nic_ip references ----------
+    - name: Verify Corefile contains NO admin_nic_ip references
+      ansible.builtin.shell: |
+        grep -r "^[[:space:]]*[^#]" /etc/openchami/configs/ 2>/dev/null | grep "admin_nic_ip" || echo "CLEAN: no admin_nic_ip references"
+      register: admin_nic_audit
+      changed_when: false
+      failed_when: "'admin_nic_ip' in admin_nic_audit.stdout"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display admin_nic_ip audit result
+      ansible.builtin.debug:
+        msg: "{{ admin_nic_audit.stdout }}"
+
+    # ---- D. Image cache audit (detect :latest tags) ---------------------
+    - name: List images using :latest tag
+      ansible.builtin.shell: |
+        podman images --format '{{.Repository}}:{{.Tag}}' | grep ':latest' || echo "No :latest images"
+      register: latest_images
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display :latest image audit
+      ansible.builtin.debug:
+        msg:
+          - "=== IMAGES WITH :LATEST TAG ==="
+          - "{{ latest_images.stdout_lines }}"
+
+    # ---- E. Podman network state — VERIFY aardvark-dns is enabled -------
+    - name: Inspect each Podman network
+      ansible.builtin.shell: |
+        for net in $(podman network ls --format '{{.Name}}'); do
+          echo "=== Network: $net ==="
+          podman network inspect $net --format 'Name={{.Name}} dns_enabled={{.DNSEnabled}} subnets={{range .Subnets}}{{.Subnet}} {{end}}'
+        done
+      register: network_state
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display Podman network state
+      ansible.builtin.debug:
+        msg:
+          - "=== PODMAN NETWORKS ==="
+          - "{{ network_state.stdout_lines }}"
+
+    # ---- F. Port 53 binding analysis -------------------------------------
+    - name: Identify all processes bound to port 53
+      ansible.builtin.command: ss -tulpn
+      register: port_listeners
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Filter for port 53
+      ansible.builtin.set_fact:
+        port_53_holders: "{{ port_listeners.stdout_lines | select('match', '.*:53 ') | list }}"
+
+    - name: Display port 53 binding analysis
+      ansible.builtin.debug:
+        msg:
+          - "=== PORT 53 HOLDERS ==="
+          - "{{ port_53_holders }}"
+
+    # ---- G. Auto-detect external interface name (NOT IP) ----------------
+    - name: Gather network facts for default interface detection
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display detected default interface (for CoreDNS bind directive)
+      ansible.builtin.debug:
+        msg:
+          - "=== DETECTED DEFAULT INTERFACE ==="
+          - "Interface: {{ ansible_default_ipv4.interface | default('NOT DETECTED') }}"
+          - "Address: {{ ansible_default_ipv4.address | default('NOT DETECTED') }}"
+          - "Gateway: {{ ansible_default_ipv4.gateway | default('NOT DETECTED') }}"
+
+    # ---- H. Read existing configs.yaml to see what was deployed ----------
+    - name: Check if configs.yaml exists
+      ansible.builtin.stat:
+        path: /opt/workdir/configs.yaml
+      register: configs_yaml_stat
+      delegate_to: oim
+      connection: ssh
+
+    - name: Read deployed configs.yaml
+      ansible.builtin.slurp:
+        path: /opt/workdir/configs.yaml
+      register: deployed_configs_yaml
+      when: configs_yaml_stat.stat.exists
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display deployed configs.yaml
+      ansible.builtin.debug:
+        msg:
+          - "=== DEPLOYED CONFIGS.YAML ==="
+          - "{{ (deployed_configs_yaml.content | b64decode).split('\n') if configs_yaml_stat.stat.exists else ['FILE NOT FOUND'] }}"
+
+    # ---- I. Service state analysis ---------------------------------------
+    - name: Check openchami.target dependencies
+      ansible.builtin.command: systemctl list-dependencies openchami.target --no-pager
+      register: target_deps
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display openchami.target dependency tree
+      ansible.builtin.debug:
+        msg:
+          - "=== OPENCHAMI.TARGET DEPENDENCIES ==="
+          - "{{ target_deps.stdout_lines }}"
+
+    - name: Check for failed services
+      ansible.builtin.shell: |
+        systemctl list-units --state=failed --no-pager | grep -E '(openchami|coresmd|haproxy|postgres|smd|bss)' || echo "No failed services"
+      register: failed_services
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display failed services
+      ansible.builtin.debug:
+        msg:
+          - "=== FAILED SERVICES ==="
+          - "{{ failed_services.stdout_lines }}"
+
+    # ---- J. Verify aardvark-dns is running -------------------------------
+    - name: Check aardvark-dns process
+      ansible.builtin.shell: pgrep -a aardvark-dns || echo "aardvark-dns NOT RUNNING"
+      register: aardvark_check
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display aardvark-dns status
+      ansible.builtin.debug:
+        msg:
+          - "=== AARDVARK-DNS STATUS ==="
+          - "{{ aardvark_check.stdout }}"
+
+    # ---- K. Complete diagnostic summary ----------------------------------
+    - name: Generate diagnostic report
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "DIAGNOSTIC DIFFERENTIAL ANALYSIS COMPLETE"
+          - "========================================="
+          - ""
+          - "KEY FINDINGS:"
+          - "1. admin_nic_ip audit: {{ 'CLEAN' if 'CLEAN' in admin_nic_audit.stdout else 'CONTAMINATED' }}"
+          - "2. :latest images: {{ latest_images.stdout_lines | length }} found"
+          - "3. Port 53 conflicts: {{ port_53_holders | length }} processes"
+          - "4. aardvark-dns: {{ 'RUNNING' if 'aardvark-dns' in aardvark_check.stdout else 'NOT RUNNING' }}"
+          - "5. Failed services: {{ failed_services.stdout_lines | length }}"
+          - "6. Default interface: {{ ansible_default_ipv4.interface | default('UNDETECTED') }}"
+          - ""
+          - "NEXT STEPS:"
+          - "- Review Corefile diff above"
+          - "- Check if CoreDNS is binding to 0.0.0.0:53 (conflicts with aardvark-dns)"
+          - "- Verify cluster_boot_ip matches detected interface IP"
+          - "- Force-pull :latest images to get pinned versions"

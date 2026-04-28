@@ -32,6 +32,20 @@
           "rm /opt/omnia/.data/upgrade_in_progress.lock" and then proceed.
       when: upgrade_lock.stat.exists
 
+    - name: Check OpenCHAMI upgrade lock
+      block:
+        - name: Check if OpenCHAMI upgrade lock exists
+          ansible.builtin.stat:
+            path: /opt/omnia/.data/openchami_upgrade_in_progress.lock
+          register: openchami_upgrade_lock
+
+        - name: Block if OpenCHAMI upgrade is in progress
+          ansible.builtin.fail:
+            msg: >-
+              OpenCHAMI upgrade is in progress (lock file exists at /opt/omnia/.data/openchami_upgrade_in_progress.lock).
+              Wait for the upgrade to complete or remove the lock file if the previous upgrade was interrupted.
+          when: openchami_upgrade_lock.stat.exists
+
     - name: Check OpenCHAMI deployment status
       block:
         - name: Check if OpenCHAMI is deployed
@@ -52,9 +66,10 @@
                 - postgres
                 - minio-server
                 - haproxy
+                - coresmd
               register: container_status
               changed_when: false
-              failed_when: container_status.stdout | length == 0
+              failed_when: false
 
             - name: Test SMD endpoint availability
               ansible.builtin.uri:
@@ -62,6 +77,7 @@
                 method: GET
                 validate_certs: false
                 status_code: [200, 401]
+                timeout: 15
               register: smd_health
               failed_when: smd_health.status not in [200, 401]
 
@@ -71,4 +87,4 @@
                   OpenCHAMI health check failed. Upgrade cannot proceed.
                   Missing or unhealthy containers detected.
                   Run 'podman ps -a' to diagnose container issues.
-              when: container_status.results | selectattr('stdout', 'equalto', '') | list | length > 0
+              when: container_status.results | selectattr('stdout', 'defined') | selectattr('stdout', 'equalto', '') | list | length > 0

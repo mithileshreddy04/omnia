@@ -1,0 +1,294 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Version-aware rollback: restore v2.1.0.0 from backup
+# Accepts: rollback_to_version (default: v2.1.0.0)
+# CRITICAL: Persistent volumes (PostgreSQL, MinIO, local-ca) are NEVER deleted.
+# ===========================================================================
+
+- name: Rollback OpenCHAMI to v2.1.0.0
+  tags: [openchami, rollback]
+  block:
+
+    # ---- 1. Validate backup exists ---------------------------------------
+    - name: Verify v2.1 backup directory exists
+      ansible.builtin.stat:
+        path: "{{ openchami_backup_base_dir }}"
+      register: backup_dir_check
+      delegate_to: oim
+      connection: ssh
+
+    - name: Fail if backup directory missing
+      ansible.builtin.fail:
+        msg: |
+          Rollback ABORTED: backup directory not found at {{ openchami_backup_base_dir }}.
+          Cannot restore without a valid backup. Was preserve_openchami_data.yml run before upgrade?
+      when: not backup_dir_check.stat.exists
+
+    - name: Verify v2.1 quadlet backup exists
+      ansible.builtin.stat:
+        path: "{{ openchami_backup_quadlets_dir }}"
+      register: quadlet_backup_check
+      delegate_to: oim
+      connection: ssh
+
+    - name: Fail if quadlet backup missing
+      ansible.builtin.fail:
+        msg: |
+          Rollback ABORTED: quadlet backup not found at {{ openchami_backup_quadlets_dir }}.
+      when: not quadlet_backup_check.stat.exists
+
+    # ---- 2. Stop v2.2 services ------------------------------------------
+    - name: Stop OpenCHAMI v2.2 services
+      ansible.builtin.systemd:
+        name: openchami.target
+        state: stopped
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Wait for containers to stop
+      ansible.builtin.pause:
+        seconds: 10
+
+    # ---- 3. Stop and disable v2.2 split services -------------------------
+    - name: Stop coresmd-coredhcp service
+      ansible.builtin.systemd:
+        name: coresmd-coredhcp.service
+        state: stopped
+        enabled: false
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Stop coresmd-coredns service
+      ansible.builtin.systemd:
+        name: coresmd-coredns.service
+        state: stopped
+        enabled: false
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # ---- 4. Remove v2.2 containers (preserve volumes) --------------------
+    - name: Remove v2.2 OpenCHAMI containers
+      ansible.builtin.command: podman rm -f {{ item }}
+      loop: "{{ openchami_all_containers + ['coresmd-coredhcp', 'coresmd-coredns'] }}"
+      register: rollback_remove
+      changed_when: rollback_remove.rc == 0
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 5. Remove v2.2 quadlet files ------------------------------------
+    - name: Remove v2.2 coresmd split quadlet files
+      ansible.builtin.file:
+        path: "{{ openchami_quadlet_dir }}/{{ item }}"
+        state: absent
+      loop:
+        - coresmd-coredhcp.container
+        - coresmd-coredns.container
+      delegate_to: oim
+      connection: ssh
+
+    - name: Remove all current quadlet files before restore
+      ansible.builtin.shell: |
+        set -o pipefail
+        rm -f {{ openchami_quadlet_dir }}/*.container 2>/dev/null || true
+      changed_when: true
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 6. Restore v2.1 quadlet files from backup -----------------------
+    - name: Restore v2.1 quadlet files from backup
+      ansible.builtin.shell: |
+        set -o pipefail
+        cp -a {{ openchami_backup_quadlets_dir }}/*.container {{ openchami_quadlet_dir }}/ 2>/dev/null || true
+        cp -a {{ openchami_backup_quadlets_dir }}/*.volume {{ openchami_quadlet_dir }}/ 2>/dev/null || true
+        cp -a {{ openchami_backup_quadlets_dir }}/*.network {{ openchami_quadlet_dir }}/ 2>/dev/null || true
+        ls -la {{ openchami_quadlet_dir }}/
+      register: restore_quadlets_result
+      changed_when: true
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log restored quadlet files
+      ansible.builtin.debug:
+        msg: "{{ restore_quadlets_result.stdout_lines }}"
+
+    # ---- 7. Restore openchami.target from backup -------------------------
+    - name: Check if openchami.target backup exists
+      ansible.builtin.stat:
+        path: "{{ openchami_backup_quadlets_dir }}/openchami.target"
+      register: target_backup_check
+      delegate_to: oim
+      connection: ssh
+
+    - name: Restore openchami.target from backup
+      ansible.builtin.copy:
+        src: "{{ openchami_backup_quadlets_dir }}/openchami.target"
+        dest: "{{ openchami_systemd_dir }}/openchami.target"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+      when: target_backup_check.stat.exists
+
+    # ---- 8. Restore v2.1 env files from backup --------------------------
+    - name: Restore env files from backup
+      ansible.builtin.shell: |
+        set -o pipefail
+        if [ -d {{ openchami_backup_env_dir }} ]; then
+          ls {{ openchami_backup_env_dir }}/*.env 2>/dev/null | wc -l
+        else
+          echo "0"
+        fi
+      register: env_file_count
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log env file restore count
+      ansible.builtin.debug:
+        msg: "{{ env_file_count.stdout | trim }} env files available for rollback containers"
+
+    # ---- 9. Pull v2.1 images (if not already present) --------------------
+    - name: Pull v2.1 images for rollback
+      ansible.builtin.command: "podman pull {{ item }}"
+      loop:
+        - "ghcr.io/openchami/local-ca:{{ openchami_v21_local_ca_tag }}"
+        - "ghcr.io/openchami/opaal:{{ openchami_v21_opaal_tag }}"
+        - "ghcr.io/openchami/smd:{{ openchami_v21_smd_tag }}"
+        - "ghcr.io/openchami/bss:{{ openchami_v21_bss_tag }}"
+        - "ghcr.io/openchami/cloud-init:{{ openchami_v21_cloud_init_tag }}"
+        - "ghcr.io/openchami/coredhcp:{{ openchami_v21_coresmd_tag }}"
+        - "docker.io/oryd/hydra:{{ openchami_v21_hydra_tag }}"
+      register: rollback_pull
+      retries: 3
+      delay: 10
+      until: rollback_pull.rc == 0
+      changed_when: "'Already exists' not in rollback_pull.stdout | default('')"
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 10. Reload systemd and start v2.1 services ---------------------
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      delegate_to: oim
+      connection: ssh
+
+    - name: Start OpenCHAMI v2.1 services
+      ansible.builtin.systemd:
+        name: openchami.target
+        state: started
+        enabled: true
+      delegate_to: oim
+      connection: ssh
+
+    - name: Wait for v2.1 services to stabilize
+      ansible.builtin.pause:
+        seconds: 30
+
+    # ---- 11. Verify rollback containers are running ----------------------
+    - name: Verify critical containers are running after rollback
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman ps --format '{% raw %}{{.Names}}{% endraw %}' | grep -w "{{ item }}" || true
+      loop: "{{ openchami_critical_containers }}"
+      register: rollback_verify
+      changed_when: false
+      failed_when: item not in (rollback_verify.stdout | default(''))
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 12. Verify env vars on rollback containers match v2.1 backup ----
+    - name: Verify env var parity on rollback containers
+      ansible.builtin.shell: |
+        set -o pipefail
+        BACKUP_FILE="{{ openchami_backup_env_dir }}/{{ item }}.env"
+        if [ ! -f "$BACKUP_FILE" ]; then
+          echo "SKIP: No backup for {{ item }}"
+          exit 0
+        fi
+        if ! podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -qw "{{ item }}"; then
+          echo "SKIP: {{ item }} not running"
+          exit 0
+        fi
+        CURRENT=$(podman inspect {{ item }} -f '{% raw %}{{range .Config.Env}}{{println .}}{{end}}{% endraw %}' 2>/dev/null | sort)
+        MISSING=""
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          case "$line" in PATH=*|HOSTNAME=*|HOME=*|container=*) continue;; esac
+          if ! echo "$CURRENT" | grep -qF "$line"; then
+            MISSING="${MISSING}MISSING: $line\n"
+          fi
+        done < "$BACKUP_FILE"
+        if [ -n "$MISSING" ]; then
+          echo -e "ENV_PARITY_FAIL for {{ item }}:\n$MISSING"
+          exit 1
+        fi
+        echo "OK: {{ item }} env parity passed"
+      loop: "{{ openchami_all_containers }}"
+      register: rollback_env_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Report rollback env parity results
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ rollback_env_check.results }}"
+      when: item.stdout is defined and item.stdout | length > 0
+
+    - name: Display rollback success
+      ansible.builtin.debug:
+        msg: |
+          OpenCHAMI rollback to v2.1.0.0 completed successfully.
+          - Quadlet files restored from {{ openchami_backup_quadlets_dir }}
+          - Env files preserved from {{ openchami_backup_env_dir }}
+          - Persistent volumes (PostgreSQL, MinIO, local-ca) untouched
+          - openchami.target restored and started
+
+  rescue:
+    - name: Collect rollback failure diagnostics
+      ansible.builtin.shell: |
+        echo "=== podman ps -a ==="
+        podman ps -a --format 'table {% raw %}{{.Names}}\t{{.Status}}\t{{.Image}}{% endraw %}'
+        echo "=== systemctl status openchami.target ==="
+        systemctl status openchami.target --no-pager || true
+      register: rollback_diagnostics
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display rollback diagnostics
+      ansible.builtin.debug:
+        msg: "{{ rollback_diagnostics.stdout_lines | default([]) }}"
+
+    - name: Rollback failed
+      ansible.builtin.fail:
+        msg: |
+          OpenCHAMI rollback to v2.1.0.0 FAILED.
+          Backup directory: {{ openchami_backup_base_dir }}
+          Manual recovery steps:
+          1. Check container status: podman ps -a
+          2. Restore quadlets manually: cp {{ openchami_backup_quadlets_dir }}/* {{ openchami_quadlet_dir }}/
+          3. Reload systemd: systemctl daemon-reload
+          4. Start services: systemctl start openchami.target

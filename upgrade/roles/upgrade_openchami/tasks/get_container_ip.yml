@@ -1,0 +1,74 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Reusable task block for dynamic container IP discovery
+# ===========================================================================
+# WHY: Eliminates dependency on admin_nic_ip variable by discovering container
+#      IPs at runtime using podman inspect.
+#
+# CRITICAL EDGE CASE: The top-level IPAddress field in podman inspect output
+#                     is EMPTY (""). The actual IP lives under:
+#                     .NetworkSettings.Networks.<network_name>.IPAddress
+#
+# USAGE:
+#   - ansible.builtin.include_tasks: get_container_ip.yml
+#     vars:
+#       container_name: "smd"
+#
+# OUTPUT:
+#   Sets fact: {{ container_name | replace('-', '_') }}_ip
+#   Example: container_name="smd" → smd_ip="10.89.3.138"
+#            container_name="coresmd-coredhcp" → coresmd_coredhcp_ip="10.89.3.150"
+# ===========================================================================
+
+- name: "Retrieve IP address for container '{{ container_name }}'"
+  ansible.builtin.command: >
+    podman inspect {{ container_name }}
+    --format '{% raw %}{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}{% endraw %}'
+  register: container_ip_result
+  changed_when: false
+  failed_when:
+    - container_ip_result.rc != 0
+  delegate_to: oim
+  connection: ssh
+  tags: [openchami, healthcheck, ip_discovery]
+
+- name: "Set fact for {{ container_name }} IP"
+  ansible.builtin.set_fact:
+    "{{ container_name | replace('-', '_') }}_ip": "{{ container_ip_result.stdout | trim }}"
+  tags: [openchami, healthcheck, ip_discovery]
+
+- name: "Validate {{ container_name }} IP is non-empty and valid IPv4"
+  ansible.builtin.assert:
+    that:
+      - container_ip_result.stdout | trim | length > 0
+      - container_ip_result.stdout | trim is match('^\d+\.\d+\.\d+\.\d+$')
+    fail_msg: |
+      Failed to retrieve a valid IPv4 address for container '{{ container_name }}'.
+      Got: '{{ container_ip_result.stdout | trim }}'.
+      
+      Troubleshooting steps:
+        1. Verify the container is running:
+           podman ps | grep {{ container_name }}
+        
+        2. Check container network configuration:
+           podman inspect {{ container_name }} | grep -A5 Networks
+        
+        3. Verify container has joined a network:
+           podman network ls
+           podman network inspect <network_name>
+    success_msg: "Container '{{ container_name }}' IP: {{ container_ip_result.stdout | trim }}"
+  tags: [openchami, healthcheck, ip_discovery]

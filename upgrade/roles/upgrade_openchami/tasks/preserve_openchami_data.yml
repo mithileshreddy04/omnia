@@ -13,26 +13,186 @@
 # limitations under the License.
 ---
 
+# ===========================================================================
+# Preserve ALL OpenCHAMI v2.1 artefacts before upgrade.
+# Layout:
+#   /opt/omnia/.backup/openchami/v2.1.0.0/
+#     quadlets/   — every .container file from /etc/containers/systemd/
+#     env/        — <container>.env for each running container
+#     configs/    — configs.yaml, inventory.yaml, openchami configs
+#     db/         — smd.sql  (pg_dump of the SMD database)
+#   /opt/omnia/.data/openchami_pre_upgrade_snapshot.json  — SMD inventory
+# ===========================================================================
+
 - name: Preserve OpenCHAMI data
+  tags: [openchami, upgrade, backup]
   block:
-    - name: Create snapshot directory
+
+    # ---- 1. Create backup directory tree ---------------------------------
+    - name: Create backup directories
       ansible.builtin.file:
-        path: "{{ openchami_snapshot_dir }}"
+        path: "{{ item }}"
+        state: directory
+        mode: "{{ dir_permissions_755 }}"
+      loop:
+        - "{{ openchami_backup_base_dir }}"
+        - "{{ openchami_backup_quadlets_dir }}"
+        - "{{ openchami_backup_env_dir }}"
+        - "{{ openchami_backup_configs_dir }}"
+        - "{{ openchami_backup_db_dir }}"
+        - "{{ openchami_snapshot_dir }}"
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 2. Backup quadlet files -----------------------------------------
+    - name: Backup existing quadlet files
+      ansible.builtin.shell: |
+        set -o pipefail
+        for f in {{ openchami_quadlet_dir }}/*.container {{ openchami_quadlet_dir }}/*.volume {{ openchami_quadlet_dir }}/*.network; do
+          [ -f "$f" ] && cp -a "$f" {{ openchami_backup_quadlets_dir }}/ || true
+        done
+        ls -la {{ openchami_backup_quadlets_dir }}/
+      register: quadlet_backup_result
+      changed_when: true
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log backed-up quadlet files
+      ansible.builtin.debug:
+        msg: "{{ quadlet_backup_result.stdout_lines }}"
+
+    # ---- 3. Backup openchami.target --------------------------------------
+    - name: Backup openchami.target if present
+      ansible.builtin.copy:
+        src: "{{ openchami_systemd_dir }}/openchami.target"
+        dest: "{{ openchami_backup_quadlets_dir }}/openchami.target"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # ---- 4. Extract & backup env vars for every running container --------
+    # WHY: NON-NEGOTIABLE per upgrade spec — env vars are preserved AS-IS.
+    - name: Extract environment variables from each container
+      ansible.builtin.shell: |
+        set -o pipefail
+        if podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -qw "{{ item }}"; then
+          podman inspect {{ item }} -f '{% raw %}{{range .Config.Env}}{{println .}}{{end}}{% endraw %}' \
+            > {{ openchami_backup_env_dir }}/{{ item }}.env 2>/dev/null
+          echo "OK: {{ item }}"
+        else
+          echo "SKIP: {{ item }} not found"
+        fi
+      loop: "{{ openchami_all_containers }}"
+      register: env_backup_results
+      changed_when: "'OK:' in env_backup_results.stdout"
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log env backup results
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ env_backup_results.results }}"
+      when: item.stdout is defined
+
+    # ---- 5. Backup deployment-recipes configs ----------------------------
+    - name: Backup openchami configs directory
+      ansible.builtin.shell: |
+        set -o pipefail
+        [ -d /etc/ochami/configs ] && cp -a /etc/ochami/configs {{ openchami_backup_configs_dir }}/ochami_configs || true
+        [ -d /etc/openchami/configs ] && cp -a /etc/openchami/configs {{ openchami_backup_configs_dir }}/openchami_configs || true
+        [ -f {{ openchami_clone_path }}/dell/podman-quadlets/inventory/01-ochami ] && \
+          cp {{ openchami_clone_path }}/dell/podman-quadlets/inventory/01-ochami {{ openchami_backup_configs_dir }}/inventory.yaml || true
+      changed_when: true
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 5a. Backup v2.1 deployment-recipes from core path ---------------
+    # WHY: The core path will be overwritten with v2.2 recipes during
+    # the persistence phase. This backup enables rollback of recipes.
+    - name: Create recipes backup directory
+      ansible.builtin.file:
+        path: "{{ openchami_recipes_backup_dir }}"
         state: directory
         mode: "{{ dir_permissions_755 }}"
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: List MinIO buckets
+    - name: Backup v2.1 deployment-recipes from core path
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec minio-server mc ls local/ > {{ openchami_snapshot_dir }}/minio_buckets.txt
-      register: minio_list
+        if [ -d "{{ openchami_clone_path }}" ]; then
+          cp -a "{{ openchami_clone_path }}" "{{ openchami_recipes_backup_dir }}/deployment-recipes.bak"
+          echo "BACKED_UP: {{ openchami_clone_path }}"
+        else
+          echo "SKIP: {{ openchami_clone_path }} not found"
+        fi
+      register: recipes_backup_result
+      changed_when: "'BACKED_UP' in recipes_backup_result.stdout"
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log recipes backup result
+      ansible.builtin.debug:
+        msg: "{{ recipes_backup_result.stdout }}"
+
+    # ---- 6. PostgreSQL dump (SMD + BSS databases) ------------------------
+    - name: Dump PostgreSQL databases via pg_dump
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres pg_dump -U ochami hmsds > {{ openchami_backup_db_dir }}/smd.sql 2>/dev/null
+        podman exec postgres pg_dump -U ochami bssdb > {{ openchami_backup_db_dir }}/bss.sql 2>/dev/null
+        ls -la {{ openchami_backup_db_dir }}/
+      register: pgdump_result
       changed_when: true
       failed_when: false
       delegate_to: oim
-      delegate_facts: true
+      connection: ssh
+
+    - name: Log pg_dump result
+      ansible.builtin.debug:
+        msg: "{{ pgdump_result.stdout_lines }}"
+
+    # ---- 7. Snapshot SMD inventory for post-upgrade comparison -----------
+    - name: Snapshot SMD inventory (pre-upgrade)
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec smd curl -sf http://localhost:27779/hsm/v2/State/Components \
+          > {{ openchami_pre_upgrade_snapshot }} 2>/dev/null || echo '{"Components":[]}'
+      register: smd_snapshot
+      changed_when: true
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Count pre-upgrade SMD nodes
+      ansible.builtin.shell: |
+        set -o pipefail
+        cat {{ openchami_pre_upgrade_snapshot }} | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('Components',[])))" 2>/dev/null || echo "0"
+      register: pre_upgrade_node_count
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Store pre-upgrade node count as fact
+      ansible.builtin.set_fact:
+        pre_upgrade_node_count: "{{ pre_upgrade_node_count }}"
+
+    - name: Log pre-upgrade node count
+      ansible.builtin.debug:
+        msg: "Pre-upgrade SMD node count: {{ pre_upgrade_node_count.stdout }}"
+
+    # ---- 8. List MinIO buckets for audit ---------------------------------
+    - name: List MinIO buckets
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec minio-server mc ls local/ > {{ openchami_snapshot_dir }}/minio_buckets.txt 2>/dev/null || true
+      changed_when: true
+      failed_when: false
+      delegate_to: oim
       connection: ssh
 
     - name: Display data preservation success
