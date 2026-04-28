@@ -1,0 +1,17 @@
+# ===========================================================================
+# CoreDHCP Configuration for OpenCHAMI v2.2 Upgrade
+# ===========================================================================
+# CRITICAL: Uses auto-detected interface and IP from upgrade playbook
+# NO admin_nic_ip DEPENDENCY: detected_cluster_boot_interface/ip set at runtime
+# ===========================================================================
+
+server4:
+  listen:
+    - "%{{ detected_cluster_boot_interface | default(cluster_boot_interface | default('eth0')) }}"
+  plugins:
+    - server_id: {{ coredhcp_server_id | default(detected_cluster_boot_ip | default(cluster_boot_ip | default('10.0.0.1'))) }}
+    - dns: {{ coredhcp_dns_server | default(detected_cluster_boot_ip | default(cluster_boot_ip | default('10.0.0.1'))) }}
+    - router: {{ coredhcp_router | default(detected_cluster_boot_ip | default(cluster_boot_ip | default('10.0.0.1'))) }}
+    - netmask: {{ coredhcp_netmask | default('255.255.255.0') }}
+    - coresmd: https://{{ cluster_name | default('openchami') }}.{{ cluster_domain | default('openchami.cluster') }}:8443 http://{{ detected_cluster_boot_ip | default(cluster_boot_ip | default('10.0.0.1')) }}:8081 /root_ca/root_ca.crt {{ coredhcp_cache_validity | default('30s') }} {{ coredhcp_lease_duration | default('3600') }} {{ coredhcp_tftp_single_port_mode | default(true) | lower }}
+    - bootloop: /tmp/coredhcp.db {{ coredhcp_custom_ipxe | default('') }} {{ coredhcp_tmp_lease_duration | default('300') }} {{ coredhcp_dhcp_pool | default('') }}

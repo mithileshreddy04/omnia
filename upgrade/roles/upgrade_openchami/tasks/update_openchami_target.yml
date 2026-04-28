@@ -13,59 +13,50 @@
 # limitations under the License.
 ---
 
-- name: Update openchami.target for coresmd transition
+# ===========================================================================
+# Ensure the CoreDNS Corefile config exists on OIM for the new coredns split.
+# v2.1 did not have a Corefile; v2.2 requires one for coresmd-coredns.
+# The openchami.target replacement is handled in upgrade_openchami_containers.yml.
+# ===========================================================================
+
+- name: Ensure CoreDNS Corefile exists for v2.2 coresmd-coredns
+  tags: [openchami, upgrade]
   block:
-    - name: Check if openchami.target exists
+
+    - name: Check if Corefile already exists
       ansible.builtin.stat:
-        path: /etc/systemd/system/openchami.target
-      register: openchami_target_stat
+        path: /etc/openchami/configs/Corefile
+      register: corefile_stat
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: Read current openchami.target content
-      ansible.builtin.slurp:
-        src: /etc/systemd/system/openchami.target
-      register: openchami_target_content
+    - name: Deploy default Corefile if missing
+      ansible.builtin.copy:
+        content: |
+          . {
+            coresmd {
+              endpoint https://localhost:8443
+              ca_cert /root_ca/root_ca.crt
+            }
+            forward . 8.8.8.8 1.1.1.1
+            log
+            errors
+          }
+        dest: /etc/openchami/configs/Corefile
+        owner: root
+        group: root
+        mode: "{{ file_permissions_644 }}"
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
-      when: openchami_target_stat.stat.exists
+      when: not corefile_stat.stat.exists
+      # WHY localhost: CoreDNS runs on same host as HAProxy, so it can reach
+      # the gateway via localhost:8443 without needing admin_nic_ip variable.
 
-    - name: Parse openchami.target content
-      ansible.builtin.set_fact:
-        openchami_target_decoded: "{{ openchami_target_content.content | b64decode }}"
-      when: openchami_target_stat.stat.exists
-
-    - name: Check if coresmd.service is in openchami.target
-      ansible.builtin.set_fact:
-        coresmd_in_target: "{{ 'coresmd.service' in openchami_target_decoded }}"
-      when: openchami_target_stat.stat.exists
-
-    - name: No changes needed to openchami.target - coresmd.service remains as is
+    - name: Log Corefile status
       ansible.builtin.debug:
-        msg: "coresmd.service remains in openchami.target - it's a single container providing both DHCP and DNS services"
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
-      when: 
-        - openchami_target_stat.stat.exists
-        - coresmd_in_target
-
-    - name: Reload systemd daemon after target update
-      ansible.builtin.systemd:
-        daemon_reload: true
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
-      when: openchami_target_stat.stat.exists
-
-    - name: Display openchami.target update success
-      ansible.builtin.debug:
-        msg: "Successfully updated openchami.target to include coresmd-coredhcp and coresmd-coredns services"
-      when: openchami_target_stat.stat.exists
+        msg: "Corefile {{ 'already exists' if corefile_stat.stat.exists else 'deployed for coresmd-coredns' }}"
 
   rescue:
-    - name: Failed to update openchami.target
+    - name: Failed to ensure Corefile
       ansible.builtin.debug:
-        msg: "Warning: Could not update openchami.target. Manual intervention may be required."
+        msg: "Warning: Could not deploy Corefile for CoreDNS. coresmd-coredns may fail to start."

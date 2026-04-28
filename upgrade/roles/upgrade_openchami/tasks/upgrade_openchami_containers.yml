@@ -13,8 +13,131 @@
 # limitations under the License.
 ---
 
+# ===========================================================================
+# Upgrade OpenCHAMI containers from v2.1 → v2.2
+# Flow:
+#   1. Pull all v2.2 pinned images
+#   2. Update image tags in existing quadlet files
+#   3. Handle coresmd service split (coresmd → coresmd-coredhcp + coresmd-coredns)
+#   4. Update minio quadlet (image registry change)
+#   5. Stop openchami.target
+#   6. Remove old containers (volumes preserved)
+#   7. Reload systemd (regenerate .service units from quadlets)
+#   8. Start openchami.target
+#   9. Verify all critical containers are running
+# ===========================================================================
+
 - name: Upgrade OpenCHAMI containers
+  tags: [openchami, upgrade]
   block:
+
+    # ---- 0. Pre-flight: Verify CA bundle exists (required by coresmd) ----
+    - name: Verify CA trust bundle exists
+      ansible.builtin.stat:
+        path: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+      register: ca_bundle
+      delegate_to: oim
+      connection: ssh
+      failed_when: not ca_bundle.stat.exists
+
+    - name: Ensure OpenCHAMI config directory exists
+      ansible.builtin.file:
+        path: /etc/openchami/configs
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 0.5. Auto-detect cluster boot interface and IP ------------------
+    # WHY: Eliminates admin_nic_ip dependency by discovering interface at runtime
+    # CRITICAL: CoreDNS must bind to this IP, NOT 0.0.0.0 (conflicts with aardvark-dns)
+    - name: Gather network facts for interface auto-detection
+      ansible.builtin.setup:
+        gather_subset:
+          - network
+      delegate_to: oim
+      connection: ssh
+
+    - name: Auto-detect cluster boot interface from default route
+      ansible.builtin.set_fact:
+        detected_cluster_boot_interface: "{{ ansible_default_ipv4.interface }}"
+        detected_cluster_boot_ip: "{{ ansible_default_ipv4.address }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Validate detected interface is not a Podman bridge
+      ansible.builtin.assert:
+        that:
+          - detected_cluster_boot_interface is defined
+          - detected_cluster_boot_interface | length > 0
+          - not (detected_cluster_boot_interface is match('^(podman|cni-|br-|veth)'))
+        fail_msg: >
+          Detected interface '{{ detected_cluster_boot_interface }}' looks like a Podman bridge.
+          CoreDNS must bind to the host's external interface, not a Podman virtual interface.
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display auto-detected cluster boot configuration
+      ansible.builtin.debug:
+        msg:
+          - "Auto-detected cluster boot interface: {{ detected_cluster_boot_interface }}"
+          - "Auto-detected cluster boot IP: {{ detected_cluster_boot_ip }}"
+          - "This IP will be used for CoreDNS bind directive (NOT 0.0.0.0)"
+
+    # ---- 0.6. Deploy companion config files BEFORE Quadlets --------------
+    - name: Deploy CoreDNS Corefile with auto-detected IP binding
+      ansible.builtin.template:
+        src: Corefile.j2
+        dest: /etc/openchami/configs/Corefile
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify deployed Corefile contains NO admin_nic_ip references
+      ansible.builtin.shell: |
+        grep -v "^[[:space:]]*#" /etc/openchami/configs/Corefile | grep "admin_nic_ip" && exit 1 || echo "CLEAN"
+      register: corefile_admin_audit
+      changed_when: false
+      failed_when: corefile_admin_audit.rc != 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Deploy CoreDHCP config
+      ansible.builtin.template:
+        src: coredhcp.yaml.j2
+        dest: /etc/openchami/configs/coredhcp.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 1. Pull all v2.2 target images (FORCE to defeat :latest cache) --
+    - name: Force pull pinned coresmd image
+      containers.podman.podman_image:
+        name: "ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}"
+        force: yes
+        pull: yes
+      delegate_to: oim
+      connection: ssh
+
+    - name: Force pull new pinned images for previously-latest containers
+      containers.podman.podman_image:
+        name: "{{ item }}"
+        force: yes
+        pull: yes
+      loop:
+        - "docker.io/pgsty/minio:{{ minio_release_tag }}"
+        - "docker.io/library/registry:{{ registry_tag }}"
+        - "cgr.dev/chainguard/haproxy:{{ haproxy_tag }}"
+        - "cgr.dev/chainguard/curl:{{ curl_tag }}"
+      delegate_to: oim
+      connection: ssh
+
     - name: Pull new OpenCHAMI container images
       ansible.builtin.command: podman pull {{ item.image }}
       loop: "{{ openchami_target_images }}"
@@ -22,64 +145,150 @@
       retries: 3
       delay: 10
       until: pull_result.rc == 0
-      changed_when: true
+      changed_when: "'Already exists' not in pull_result.stdout | default('')"
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
+    # ---- 2. Update image tags in existing quadlet files ------------------
     - name: Update systemd quadlet files
       ansible.builtin.include_tasks: update_systemd_quadlets.yml
 
+    # ---- 3. Handle coresmd service split ---------------------------------
+    # WHY: v2.1 has a single coresmd container. v2.2 splits it into
+    #       coresmd-coredhcp (DHCP) and coresmd-coredns (DNS) services.
+    #       Both still use the same coresmd image, but the quadlet generates
+    #       two separate systemd services.
+    - name: Deploy coresmd-coredhcp quadlet file
+      ansible.builtin.template:
+        src: coresmd-coredhcp.container.j2
+        dest: "{{ openchami_quadlet_dir }}/coresmd-coredhcp.container"
+        owner: root
+        group: root
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Deploy coresmd-coredns quadlet file
+      ansible.builtin.template:
+        src: coresmd-coredns.container.j2
+        dest: "{{ openchami_quadlet_dir }}/coresmd-coredns.container"
+        owner: root
+        group: root
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 4. Update openchami.target to list new services -----------------
+    - name: Read current openchami.target
+      ansible.builtin.slurp:
+        src: "{{ openchami_systemd_dir }}/openchami.target"
+      register: openchami_target_content
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Update openchami.target — replace coresmd.service with split services
+      ansible.builtin.replace:
+        path: "{{ openchami_systemd_dir }}/openchami.target"
+        regexp: 'coresmd\.service'
+        replace: 'coresmd-coredhcp.service coresmd-coredns.service'
+      delegate_to: oim
+      connection: ssh
+      when:
+        - openchami_target_content is not failed
+        - "'coresmd.service' in (openchami_target_content.content | default('') | b64decode)"
+
+    # ---- 5. Stop openchami.target ----------------------------------------
     - name: Stop OpenCHAMI services
       ansible.builtin.systemd:
         name: openchami.target
         state: stopped
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
+      failed_when: false
 
     - name: Wait for containers to stop
       ansible.builtin.pause:
         seconds: 10
 
-    - name: Remove old OpenCHAMI containers (preserve volumes)
-      ansible.builtin.command: podman rm -f {{ item.container }}
-      loop: "{{ openchami_containers }}"
+    # ---- 6. Remove old containers (preserve volumes) ---------------------
+    - name: Remove old OpenCHAMI containers
+      ansible.builtin.command: podman rm -f {{ item }}
+      loop: "{{ openchami_all_containers }}"
       register: remove_result
-      changed_when: true
+      changed_when: remove_result.rc == 0
       failed_when: false
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
+    # ---- 7. Remove deprecated coresmd quadlet (replaced by split) --------
+    - name: Remove deprecated coresmd.container quadlet
+      ansible.builtin.file:
+        path: "{{ openchami_quadlet_dir }}/coresmd.container"
+        state: absent
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 8. Reload systemd to regenerate .service units from quadlets ----
     - name: Reload systemd daemon
       ansible.builtin.systemd:
         daemon_reload: true
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
+    # ---- 9. Start OpenCHAMI services with new images ---------------------
     - name: Start OpenCHAMI services with new images
       ansible.builtin.systemd:
         name: openchami.target
         state: started
         enabled: true
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
     - name: Wait for services to stabilize
       ansible.builtin.pause:
         seconds: 30
 
-    - name: Verify all containers are running
-      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
+    # ---- 10. Verify critical containers are running ----------------------
+    - name: Verify critical containers are running after upgrade
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman ps --format '{% raw %}{{.Names}}{% endraw %}' | grep -w "{{ item }}" || true
       loop: "{{ openchami_critical_containers }}"
       register: verify_running
       changed_when: false
-      failed_when: verify_running.stdout | length == 0
+      failed_when: item not in (verify_running.stdout | default(''))
       delegate_to: oim
-      delegate_facts: true
+      connection: ssh
+
+    # ---- 11. Verify new split services are active ------------------------
+    - name: Verify coresmd services are active
+      ansible.builtin.command: systemctl is-active {{ item }}
+      register: coresmd_active
+      changed_when: false
+      failed_when: coresmd_active.stdout != "active"
+      loop:
+        - coresmd-coredhcp.service
+        - coresmd-coredns.service
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify no services in failed state
+      ansible.builtin.shell: |
+        systemctl list-dependencies omnia.target --no-pager | grep -E "^×|^\s+×" || true
+      register: failed_services
+      changed_when: false
+      failed_when: failed_services.stdout | length > 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify no containers running with :latest tag
+      ansible.builtin.shell: |
+        podman ps --format "{% raw %}{{.Names}} {{.Image}}{% endraw %}" | grep ":latest" || true
+      register: latest_containers
+      changed_when: false
+      failed_when: latest_containers.stdout | length > 0
+      delegate_to: oim
       connection: ssh
 
     - name: Display container upgrade success
@@ -87,6 +296,24 @@
         msg: "{{ upgrade_messages.container_upgrade.success }}"
 
   rescue:
+    - name: Collect upgrade failure diagnostics
+      ansible.builtin.shell: |
+        echo "=== podman ps -a ==="
+        podman ps -a --format 'table {% raw %}{{.Names}}\t{{.Status}}\t{{.Image}}{% endraw %}'
+        echo "=== systemctl list-dependencies openchami.target ==="
+        systemctl list-dependencies openchami.target --no-pager || true
+        echo "=== journalctl -u openchami.target --no-pager -n 30 ==="
+        journalctl -u openchami.target --no-pager -n 30 || true
+      register: upgrade_diagnostics
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display upgrade failure diagnostics
+      ansible.builtin.debug:
+        msg: "{{ upgrade_diagnostics.stdout_lines | default([]) }}"
+
     - name: Container upgrade failed
       ansible.builtin.fail:
-        msg: "{{ upgrade_messages.container_upgrade.failure }} {{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}"
+        msg: "{{ upgrade_messages.container_upgrade.failure }}\n{{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}"

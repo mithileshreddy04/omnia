@@ -15,30 +15,50 @@
 
 - name: Check current OpenCHAMI container versions
   block:
-    - name: Get current container image tags
+    # WHY: Compare each container's current image against the expected v2.2 image.
+    #      If ANY mismatch is found, upgrade_needed=true.
+    - name: Get current container image names
       ansible.builtin.shell: |
         set -o pipefail
-        podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}' 2>/dev/null | \
-        podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' - 2>/dev/null || echo "not_found"
+        if podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -qw "{{ item.container }}"; then
+          podman inspect {{ item.container }} --format '{% raw %}{{.ImageName}}{% endraw %}' 2>/dev/null || echo "not_found"
+        else
+          echo "not_found"
+        fi
       loop: "{{ openchami_containers }}"
       register: current_images
       changed_when: false
       failed_when: false
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
-    - name: Determine if upgrade is needed
+    # WHY: Jinja2 zip+selectattr on tuples is fragile across Ansible versions.
+    #      A single shell script reliably compares all containers.
+    - name: Determine upgrade-needed state via comparison script
+      ansible.builtin.shell: |
+        set -o pipefail
+        NEEDS_UPGRADE=""
+        {% for item in openchami_containers %}
+        CURRENT=$(podman inspect {{ item.container }} --format '{% raw %}{{.ImageName}}{% endraw %}' 2>/dev/null || echo "not_found")
+        if [ "$CURRENT" != "{{ item.expected_image }}" ]; then
+          NEEDS_UPGRADE="${NEEDS_UPGRADE}{{ item.container }}(current=$CURRENT,expected={{ item.expected_image }}) "
+        fi
+        {% endfor %}
+        if [ -n "$NEEDS_UPGRADE" ]; then
+          echo "UPGRADE_NEEDED: $NEEDS_UPGRADE"
+          exit 0
+        else
+          echo "UP_TO_DATE"
+          exit 0
+        fi
+      register: upgrade_check_result
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Set upgrade_needed fact
       ansible.builtin.set_fact:
-        upgrade_needed: >-
-          {{
-            current_images.results |
-            selectattr('stdout', 'defined') |
-            map(attribute='stdout') |
-            zip(openchami_containers | map(attribute='expected_image')) |
-            selectattr('0', 'ne', '1') |
-            list | length > 0
-          }}
+        upgrade_needed: "{{ 'UPGRADE_NEEDED' in upgrade_check_result.stdout }}"
 
     - name: Display upgrade status
       ansible.builtin.debug:
@@ -49,10 +69,14 @@
       ansible.builtin.debug:
         msg:
           - "{{ upgrade_messages.idempotency.upgrade_needed }}"
-          - "Containers to upgrade: {{ current_images.results | zip(openchami_containers) | selectattr('0.stdout', 'ne', '1.expected_image') | map(attribute='1.container') | list }}"
+          - "{{ upgrade_check_result.stdout }}"
       when: upgrade_needed | bool
 
   rescue:
-    - name: Upgrade state check failed
-      ansible.builtin.fail:
+    - name: Upgrade state check failed — proceeding with upgrade to be safe
+      ansible.builtin.debug:
         msg: "{{ upgrade_messages.idempotency.check_failure }}"
+
+    - name: Default to upgrade_needed=true on check failure
+      ansible.builtin.set_fact:
+        upgrade_needed: true

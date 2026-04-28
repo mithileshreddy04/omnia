@@ -1,0 +1,230 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Post-Upgrade Verification Gate — HARD FAIL on Critical Issues
+# ===========================================================================
+# PURPOSE: Ensure upgrade end-state matches fresh v2.2 deployment
+# CRITICAL CHECKS:
+#   1. NO admin_nic_ip references anywhere
+#   2. NO containers running with :latest tags
+#   3. NO services in failed state
+#   4. aardvark-dns MUST be running
+#   5. CoreDNS MUST NOT bind to 0.0.0.0:53
+#   6. All expected services MUST be active
+#   7. Inter-container DNS MUST work (aardvark-dns sanity)
+#   8. Cluster DNS MUST work (CoreDNS sanity)
+# ===========================================================================
+
+- name: Post-upgrade verification gate
+  tags: [openchami, upgrade, verification, gate]
+  block:
+
+    # ---- 1. HARD GATE: NO admin_nic_ip references -----------------------
+    - name: Audit deployed configs for admin_nic_ip references
+      ansible.builtin.shell: |
+        grep -r "^[[:space:]]*[^#]" /etc/openchami/ /etc/containers/systemd/ 2>/dev/null | grep "admin_nic_ip" || echo "CLEAN"
+      register: final_admin_audit
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if admin_nic_ip found in deployed configs
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: admin_nic_ip references found in deployed configuration.
+          This violates the upgrade requirement to eliminate admin_nic_ip dependency.
+          
+          Found in:
+          {{ final_admin_audit.stdout }}
+          
+          The upgrade MUST NOT use admin_nic_ip. Use auto-detected interface/IP instead.
+      when: "'CLEAN' not in final_admin_audit.stdout"
+
+    # ---- 2. HARD GATE: NO :latest tags ----------------------------------
+    - name: Check for containers running with :latest tag
+      ansible.builtin.shell: |
+        podman ps --format '{{.Names}} {{.Image}}' | grep ':latest' || true
+      register: latest_check
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if containers running with :latest tag
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: Containers running with :latest tag detected.
+          
+          {{ latest_check.stdout }}
+          
+          All images must use pinned versions. Force-pull failed or cache not cleared.
+      when: latest_check.stdout | length > 0
+
+    # ---- 3. HARD GATE: NO failed services --------------------------------
+    - name: Check for failed services
+      ansible.builtin.shell: |
+        systemctl list-dependencies openchami.target --no-pager | grep -E "^×|^\s+×" || true
+      register: failed_services
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if services in failed state
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: Services in failed state detected.
+          
+          {{ failed_services.stdout }}
+          
+          Run: systemctl status <service> for details.
+      when: failed_services.stdout | length > 0
+
+    # ---- 4. HARD GATE: aardvark-dns MUST be running ---------------------
+    - name: Verify aardvark-dns is running
+      ansible.builtin.shell: pgrep -a aardvark-dns
+      register: aardvark_running
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if aardvark-dns not running
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: aardvark-dns is not running.
+          
+          aardvark-dns is REQUIRED for Podman container-to-container DNS resolution.
+          The upgrade MUST preserve aardvark-dns functionality.
+          
+          Check: systemctl status podman.socket
+      when: aardvark_running.rc != 0
+
+    # ---- 5. HARD GATE: CoreDNS MUST NOT bind to 0.0.0.0:53 --------------
+    - name: Check if CoreDNS is bound to 0.0.0.0:53
+      ansible.builtin.shell: |
+        ss -tulpn | grep ':53 ' | grep '0.0.0.0' | grep coredns || echo "CLEAN"
+      register: coredns_bind_check
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if CoreDNS bound to 0.0.0.0:53
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: CoreDNS is bound to 0.0.0.0:53 (conflicts with aardvark-dns).
+          
+          {{ coredns_bind_check.stdout }}
+          
+          CoreDNS MUST bind to a specific interface IP, NOT 0.0.0.0.
+          Check /etc/openchami/configs/Corefile bind directive.
+      when: "'CLEAN' not in coredns_bind_check.stdout"
+
+    # ---- 6. HARD GATE: All expected services MUST be active -------------
+    - name: Verify all critical services are active
+      ansible.builtin.command: systemctl is-active {{ item }}
+      loop:
+        - postgres.service
+        - haproxy.service
+        - smd.service
+        - bss.service
+        - cloud-init-server.service
+        - coresmd-coredhcp.service
+        - coresmd-coredns.service
+        - step-ca.service
+        - hydra.service
+        - opaal.service
+        - opaal-idp.service
+      register: service_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Collect inactive services
+      ansible.builtin.set_fact:
+        inactive_services: "{{ service_check.results | selectattr('stdout', 'ne', 'active') | map(attribute='item') | list }}"
+
+    - name: FAIL if any critical service is inactive
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: Critical services are not active.
+          
+          Inactive services:
+          {{ inactive_services | join('\n') }}
+          
+          Run: systemctl status <service> for details.
+      when: inactive_services | length > 0
+
+    # ---- 7. HARD GATE: Inter-container DNS MUST work (aardvark-dns) -----
+    - name: Test inter-container DNS resolution (aardvark-dns sanity)
+      ansible.builtin.shell: |
+        podman run --rm --network podman alpine:latest nslookup smd 2>&1 || echo "DNS_FAILED"
+      register: dns_test
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if inter-container DNS resolution failed
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: Inter-container DNS resolution failed.
+          
+          {{ dns_test.stdout }}
+          
+          aardvark-dns is not functioning correctly. Container-to-container name
+          resolution is broken. This will cause OpenCHAMI services to fail.
+      when: "'DNS_FAILED' in dns_test.stdout or dns_test.rc != 0"
+
+    # ---- 8. HARD GATE: Cluster DNS MUST work (CoreDNS) ------------------
+    - name: Get CoreDNS container IP for testing
+      ansible.builtin.shell: |
+        podman inspect coresmd-coredns --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null || echo "127.0.0.1"
+      register: coredns_ip
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Test cluster DNS resolution via CoreDNS
+      ansible.builtin.shell: |
+        dig @{{ coredns_ip.stdout }} +short {{ cluster_name | default('openchami') }}.{{ cluster_domain | default('openchami.cluster') }} || echo "DNS_FAILED"
+      register: cluster_dns_test
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display cluster DNS test result (informational, not hard-gate)
+      ansible.builtin.debug:
+        msg:
+          - "Cluster DNS test result: {{ cluster_dns_test.stdout }}"
+          - "Note: This may fail if no nodes are registered in SMD yet"
+
+    # ---- 9. SUCCESS: All gates passed ------------------------------------
+    - name: Display verification success
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "POST-UPGRADE VERIFICATION GATE: PASSED"
+          - "========================================="
+          - ""
+          - "✓ NO admin_nic_ip references found"
+          - "✓ NO containers running with :latest tags"
+          - "✓ NO services in failed state"
+          - "✓ aardvark-dns is running"
+          - "✓ CoreDNS NOT bound to 0.0.0.0:53"
+          - "✓ All critical services are active"
+          - "✓ Inter-container DNS resolution works"
+          - ""
+          - "Upgrade end-state matches fresh v2.2 deployment requirements."

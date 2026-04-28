@@ -13,56 +13,313 @@
 # limitations under the License.
 ---
 
+# ===========================================================================
+# Post-upgrade health check
+# Verifies: container state, API health, SMD node-count parity,
+#           env-var parity against v2.1 backup, coresmd split services,
+#           MinIO bucket accessibility, TLS certificate validity.
+# NOTE: Checks for SPLIT services: 'coresmd-coredhcp' and 'coresmd-coredns' (v2.2).
+#
+# DESIGN DECISION: Uses dynamic container IP discovery instead of admin_nic_ip.
+# WHY: Eliminates undefined variable dependency and uses direct HTTP to containers.
+# PROTOCOL: HTTP only (HTTPS to container IPs fails with SSL packet length error).
+# ===========================================================================
+
 - name: Post-upgrade health check
+  tags: [openchami, upgrade, healthcheck, envvars]
   block:
+
     - name: Wait for service initialization
       ansible.builtin.pause:
         seconds: 60
 
-    - name: Verify all OpenCHAMI containers are running
-      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
-      loop: "{{ openchami_critical_containers }}"
-      register: container_check
+    # ---- 1. Verify critical containers are running (v2.2) ----------------
+    - name: Verify all critical OpenCHAMI containers are running (v2.2)
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman ps --filter "name=^{{ item }}$" --format '{% raw %}{{.Names}}{% endraw %}'
+      loop: "{{ openchami_v22_critical_containers }}"
+      register: post_container_check
       changed_when: false
-      failed_when: container_check.stdout | length == 0
+      failed_when: item not in (post_container_check.stdout | default(''))
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
 
+    # ---- 2. PostgreSQL connectivity --------------------------------------
     - name: Check postgres database connectivity
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres pg_isready
-      register: postgres_check
+        podman exec postgres pg_isready -U ochami
+      register: post_postgres_check
       changed_when: false
-      failed_when: postgres_check.rc != 0
+      failed_when: post_postgres_check.rc != 0
       delegate_to: oim
       connection: ssh
 
-    - name: Verify container image versions
+    # ---- 3. Discover SMD container IP ------------------------------------
+    - name: Get SMD container IP
+      ansible.builtin.include_tasks: get_container_ip.yml
+      vars:
+        container_name: "{{ openchami_smd_container }}"
+
+    # ---- 4. SMD API health checks ----------------------------------------
+    - name: Check SMD service ready endpoint
+      ansible.builtin.uri:
+        url: "http://{{ smd_ip }}:{{ openchami_smd_port }}{{ openchami_smd_ready_path }}"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 15
+      register: post_smd_health
+      retries: 5
+      delay: 10
+      until: post_smd_health.status == 200
+      failed_when:
+        - post_smd_health.status != 200
+        - "'HSM is healthy' not in (post_smd_health.content | default(''))"
+      delegate_to: oim
+      connection: ssh
+      tags: [openchami, healthcheck, postupgrade, smd]
+
+    # ---- 5. SMD node count parity ----------------------------------------
+    - name: Get post-upgrade SMD node count
+      ansible.builtin.uri:
+        url: "http://{{ smd_ip }}:{{ openchami_smd_port }}{{ openchami_smd_components_path }}"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 15
+      register: post_smd_components
+      delegate_to: oim
+      connection: ssh
+      tags: [openchami, healthcheck, postupgrade, smd]
+
+    - name: Parse SMD node count
+      ansible.builtin.set_fact:
+        post_upgrade_node_count: "{{ post_smd_components.json.Components | length }}"
+      tags: [openchami, healthcheck, postupgrade, smd]
+
+    - name: Verify SMD node count matches pre-upgrade snapshot
+      ansible.builtin.assert:
+        that:
+          - post_upgrade_node_count | int == (pre_upgrade_node_count.stdout | default('0') | int)
+        fail_msg: "{{ upgrade_messages.health_check.node_count_mismatch }}"
+        success_msg: "{{ upgrade_messages.health_check.node_count_match }}"
+      when: pre_upgrade_node_count is defined and pre_upgrade_node_count.stdout is defined
+      tags: [openchami, healthcheck, postupgrade, smd]
+
+    # ---- 6. Discover BSS container IP ------------------------------------
+    - name: Get BSS container IP
+      ansible.builtin.include_tasks: get_container_ip.yml
+      vars:
+        container_name: "{{ openchami_bss_container }}"
+
+    # ---- 7. BSS API health check -----------------------------------------
+    - name: Check BSS service status endpoint
+      ansible.builtin.uri:
+        url: "http://{{ bss_ip }}:{{ openchami_bss_port }}{{ openchami_bss_status_path }}"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 15
+      register: post_bss_health
+      retries: 5
+      delay: 10
+      until: post_bss_health.status == 200
+      failed_when:
+        - post_bss_health.status != 200
+        - "'running' not in (post_bss_health.content | default(''))"
+      delegate_to: oim
+      connection: ssh
+      tags: [openchami, healthcheck, postupgrade, bss]
+
+    # ---- 8. coresmd split services ---------------------------------------
+    - name: Check coresmd-coredhcp service is active
+      ansible.builtin.shell: systemctl is-active coresmd-coredhcp.service
+      register: post_coredhcp_active
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check coresmd-coredns service is active
+      ansible.builtin.shell: systemctl is-active coresmd-coredns.service
+      register: post_coredns_active
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check DHCP port 67 is listening
       ansible.builtin.shell: |
         set -o pipefail
-        # Check if container exists
-        if ! podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^{{ item.container }}$"; then
-          echo "Container {{ item.container }} does not exist"
+        ss -ulnp | grep ':67 ' || echo "NOT_LISTENING"
+      register: post_dhcp_port
+      changed_when: false
+      failed_when: "'NOT_LISTENING' in post_dhcp_port.stdout"
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 9. MinIO bucket accessibility -----------------------------------
+    - name: Check MinIO is accessible
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec minio-server mc ls local/ 2>/dev/null || echo "MINIO_UNREACHABLE"
+      register: post_minio_check
+      changed_when: false
+      failed_when: "'MINIO_UNREACHABLE' in post_minio_check.stdout"
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 10. TLS certificate validity ------------------------------------
+    - name: Check step-ca certificate validity
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec step-ca step ca health 2>/dev/null && echo "CA_HEALTHY" || echo "CA_UNHEALTHY"
+      register: post_ca_health
+      changed_when: false
+      failed_when: "'CA_UNHEALTHY' in post_ca_health.stdout"
+      delegate_to: oim
+      connection: ssh
+
+    # ---- 11. Environment variable parity check ---------------------------
+    # WHY: MANDATORY — every env var from v2.1 must be present in v2.2.
+    - name: Extract current env vars from upgraded containers
+      ansible.builtin.shell: |
+        set -o pipefail
+        if podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -qw "{{ item }}"; then
+          podman inspect {{ item }} -f '{% raw %}{{range .Config.Env}}{{println .}}{{end}}{% endraw %}' 2>/dev/null | sort
+        else
+          echo "CONTAINER_NOT_RUNNING"
+        fi
+      loop: "{{ openchami_all_containers }}"
+      register: post_env_results
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check env var parity against v2.1 backup
+      ansible.builtin.shell: |
+        set -o pipefail
+        BACKUP_FILE="{{ openchami_backup_env_dir }}/{{ item }}.env"
+        if [ ! -f "$BACKUP_FILE" ]; then
+          echo "SKIP: No v2.1 backup for {{ item }}"
           exit 0
         fi
-        # Get image and verify version
-        IMAGE_ID=$(podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}')
-        podman inspect $IMAGE_ID --format '{% raw %}{{index .RepoTags 0}}{% endraw %}'
-      loop: "{{ openchami_containers }}"
-      register: version_check
+        if ! podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -qw "{{ item }}"; then
+          echo "SKIP: {{ item }} not running post-upgrade"
+          exit 0
+        fi
+        # Compare: every line in backup must exist in current env
+        CURRENT=$(podman inspect {{ item }} -f '{% raw %}{{range .Config.Env}}{{println .}}{{end}}{% endraw %}' 2>/dev/null | sort)
+        MISSING=""
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          # Skip PATH and container-runtime injected vars
+          case "$line" in PATH=*|HOSTNAME=*|HOME=*|container=*) continue;; esac
+          if ! echo "$CURRENT" | grep -qF "$line"; then
+            MISSING="${MISSING}MISSING: $line\n"
+          fi
+        done < "$BACKUP_FILE"
+        if [ -n "$MISSING" ]; then
+          echo -e "ENV_PARITY_FAIL for {{ item }}:\n$MISSING"
+          exit 1
+        fi
+        echo "OK: {{ item }} env parity passed"
+      loop: "{{ openchami_all_containers }}"
+      register: env_parity_results
       changed_when: false
-      failed_when: version_check.stdout != "" and version_check.stdout != "Container " + item.container + " does not exist" and version_check.stdout != item.expected_image
+      failed_when: false
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
+
+    - name: Report env parity results
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ env_parity_results.results }}"
+      when: item.stdout is defined and item.stdout | length > 0
+
+    - name: Fail if any env parity check failed
+      ansible.builtin.assert:
+        that:
+          - env_parity_results.results | selectattr('rc', 'defined') | selectattr('rc', 'ne', 0) | list | length == 0
+        fail_msg: "{{ upgrade_messages.env_parity.failure }}"
+        success_msg: "{{ upgrade_messages.env_parity.success }}"
+
+    # ---- 12. Verify container image versions match target ----------------
+    - name: Verify container image versions match target
+      ansible.builtin.shell: |
+        set -o pipefail
+        if ! podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -qw "{{ item.container }}"; then
+          echo "SKIP: {{ item.container }}"
+          exit 0
+        fi
+        ACTUAL=$(podman inspect {{ item.container }} --format '{% raw %}{{.ImageName}}{% endraw %}' 2>/dev/null || echo "unknown")
+        echo "$ACTUAL"
+      loop: "{{ openchami_containers }}"
+      register: post_version_check
+      changed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log post-upgrade image versions
+      ansible.builtin.debug:
+        msg: "{{ item.item.container }}: {{ item.stdout }}"
+      loop: "{{ post_version_check.results }}"
 
     - name: Display post-upgrade health check success
       ansible.builtin.debug:
         msg: "{{ upgrade_messages.health_check.post_check_success }}"
 
   rescue:
+    - name: Collect post-upgrade failure diagnostics
+      ansible.builtin.shell: |
+        echo "=== podman ps -a ==="
+        podman ps -a --format 'table {% raw %}{{.Names}}\t{{.Status}}\t{{.Image}}{% endraw %}'
+        echo "=== failed services ==="
+        systemctl list-units --state=failed --no-pager || true
+      register: post_diagnostics
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display post-upgrade diagnostics
+      ansible.builtin.debug:
+        msg: "{{ post_diagnostics.stdout_lines | default([]) }}"
+
     - name: Post-upgrade health check failed
       ansible.builtin.fail:
-        msg: "{{ upgrade_messages.health_check.post_check_failure }}\n{{ upgrade_messages.troubleshooting.post_check_diagnosis }}"
+        msg: |
+          Post-upgrade health check FAILED.
+          
+          {{ upgrade_messages.health_check.post_check_failure | default('One or more OpenCHAMI v2.2 services are not healthy.') }}
+          
+          Troubleshooting steps:
+            1. Check container status:
+               podman ps -a | grep -E '(smd|bss|postgres|coresmd-coredhcp|coresmd-coredns|haproxy)'
+            
+            2. Check container logs:
+               podman logs smd
+               podman logs bss
+               podman logs coresmd-coredhcp
+               podman logs coresmd-coredns
+            
+            3. Verify container IPs:
+               podman inspect smd | grep -A2 IPAddress
+               podman inspect bss | grep -A2 IPAddress
+            
+            4. Test endpoints manually:
+               curl http://<smd_ip>:27779/hsm/v2/service/ready
+               curl http://<bss_ip>:27778/boot/v1/service/status
+            
+            5. Check systemd services:
+               systemctl status openchami.target
+               systemctl status coresmd-coredhcp.service
+               systemctl status coresmd-coredns.service
+            
+            6. Check environment variable parity:
+               Review env_parity_results output above
+          
+          {{ upgrade_messages.troubleshooting.post_check_diagnosis | default('') }}

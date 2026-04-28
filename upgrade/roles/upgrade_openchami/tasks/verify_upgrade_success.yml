@@ -1,0 +1,112 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ===========================================================================
+# Post-upgrade verification gate (HARD GATE)
+# Fails the playbook if any services are in failed state or :latest tags remain
+# ===========================================================================
+
+- name: Post-upgrade verification gate
+  tags: [openchami, upgrade, verification]
+  block:
+
+    - name: Verify no services in failed state
+      ansible.builtin.shell: |
+        systemctl list-dependencies omnia.target --no-pager | grep -E "^×|^\s+×" || true
+      register: failed_services
+      changed_when: false
+      failed_when: failed_services.stdout | length > 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify no containers running with :latest tag
+      ansible.builtin.shell: |
+        podman ps --format "{{.Names}} {{.Image}}" | grep ":latest" || true
+      register: latest_containers
+      changed_when: false
+      failed_when: latest_containers.stdout | length > 0
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify coresmd services are active
+      ansible.builtin.command: systemctl is-active {{ item }}
+      register: coresmd_active
+      changed_when: false
+      failed_when: coresmd_active.stdout != "active"
+      loop:
+        - coresmd-coredhcp.service
+        - coresmd-coredns.service
+      delegate_to: oim
+      connection: ssh
+
+    - name: Verify omnia.target is active
+      ansible.builtin.command: systemctl is-active omnia.target
+      register: omnia_target_active
+      changed_when: false
+      failed_when: omnia_target_active.stdout != "active"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Final upgrade verification report
+      ansible.builtin.debug:
+        msg:
+          - "============================================================"
+          - "✅ All services in omnia.target are active"
+          - "✅ All containers running with pinned versions"
+          - "✅ coresmd-coredhcp and coresmd-coredns active"
+          - "✅ No :latest tags remain"
+          - "✅ OpenCHAMI v2.1.0.0 → v2.2.0.0 upgrade SUCCESSFUL"
+          - "============================================================"
+
+  rescue:
+    - name: Collect verification failure diagnostics
+      ansible.builtin.shell: |
+        echo "=== FAILED SERVICES ==="
+        systemctl list-dependencies omnia.target --no-pager | grep -E "^×|^\s+×" || echo "None"
+        echo ""
+        echo "=== CONTAINERS WITH :LATEST TAGS ==="
+        podman ps --format "{{.Names}} {{.Image}}" | grep ":latest" || echo "None"
+        echo ""
+        echo "=== ALL CONTAINERS ==="
+        podman ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+        echo ""
+        echo "=== CORESMD SERVICE STATUS ==="
+        systemctl status coresmd-coredhcp.service --no-pager -l || true
+        echo ""
+        systemctl status coresmd-coredns.service --no-pager -l || true
+      register: verification_diagnostics
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display verification failure diagnostics
+      ansible.builtin.debug:
+        msg: "{{ verification_diagnostics.stdout_lines | default([]) }}"
+
+    - name: Upgrade verification FAILED
+      ansible.builtin.fail:
+        msg: |
+          ❌ POST-UPGRADE VERIFICATION FAILED ❌
+          
+          One or more critical checks failed:
+          - Services in failed state: {{ 'YES' if failed_services.stdout | default('') | length > 0 else 'NO' }}
+          - Containers with :latest tags: {{ 'YES' if latest_containers.stdout | default('') | length > 0 else 'NO' }}
+          - coresmd services inactive: {{ 'YES' if coresmd_active is failed else 'NO' }}
+          
+          Review diagnostics above and run:
+            ansible-playbook upgrade_omnia.yml --tags openchami,diagnostics
+          
+          To diagnose coresmd failures specifically.

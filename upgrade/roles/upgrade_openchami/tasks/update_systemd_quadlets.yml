@@ -14,82 +14,154 @@
 ---
 
 - name: Update systemd quadlet files with new image versions
+  tags: [openchami, upgrade, quadlets]
   block:
-    - name: Update image tags in systemd quadlet files
+
+    # ---- OpenCHAMI core service quadlets ---------------------------------
+    - name: Update step-ca quadlet image
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/{{ item.container }}.container"
+        path: "{{ openchami_quadlet_dir }}/step-ca.container"
         regexp: '^Image=.*'
-        line: "Image={{ item.image }}"
+        line: "Image=ghcr.io/openchami/local-ca:{{ openchami_local_ca_tag }}"
         state: present
-      loop: "{{ openchami_target_images }}"
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 
-    - name: Update smd-init quadlet image
+    - name: Update opaal quadlet image
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/smd-init.container"
+        path: "{{ openchami_quadlet_dir }}/{{ item }}.container"
+        regexp: '^Image=.*'
+        line: "Image=ghcr.io/openchami/opaal:{{ openchami_opaal_tag }}"
+        state: present
+      loop:
+        - opaal
+        - opaal-idp
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Update smd and smd-init quadlet images
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/{{ item }}.container"
         regexp: '^Image=.*'
         line: "Image=ghcr.io/openchami/smd:{{ openchami_smd_tag }}"
         state: present
+      loop:
+        - smd
+        - smd-init
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 
-    - name: Update bss-init quadlet image
+    - name: Update bss and bss-init quadlet images
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/bss-init.container"
+        path: "{{ openchami_quadlet_dir }}/{{ item }}.container"
         regexp: '^Image=.*'
         line: "Image=ghcr.io/openchami/bss:{{ openchami_bss_tag }}"
         state: present
+      loop:
+        - bss
+        - bss-init
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 
-    - name: Update minio quadlet image
+    - name: Update cloud-init-server quadlet image
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/minio.container"
+        path: "{{ openchami_quadlet_dir }}/cloud-init-server.container"
+        regexp: '^Image=.*'
+        line: "Image=ghcr.io/openchami/cloud-init:{{ openchami_cloud_init_tag }}"
+        state: present
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # ---- Third-party service quadlets ------------------------------------
+
+    - name: Update postgres quadlet image
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/postgres.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/library/postgres:{{ postgres_tag }}"
+        state: present
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    - name: Update hydra and hydra-migrate quadlet images
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/{{ item }}.container"
+        regexp: '^Image=.*'
+        line: "Image=docker.io/oryd/hydra:{{ hydra_tag }}"
+        state: present
+      loop:
+        - hydra
+        - hydra-migrate
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # WHY: hydra-gen-jwks uses the curl image — must be pinned.
+    - name: Update hydra-gen-jwks quadlet image (curl container)
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/hydra-gen-jwks.container"
+        regexp: '^Image=.*'
+        line: "Image=cgr.dev/chainguard/curl:{{ curl_tag }}"
+        state: present
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # WHY: haproxy was :latest in v2.1 — now pinned per G-008.
+    - name: Update haproxy quadlet image (pin from latest)
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/haproxy.container"
+        regexp: '^Image=.*'
+        line: "Image=cgr.dev/chainguard/haproxy:{{ haproxy_tag }}"
+        state: present
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # WHY: minio changed registries: minio/minio:latest → pgsty/minio:pinned.
+    - name: Update minio quadlet image (registry + pin change)
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/minio.container"
         regexp: '^Image=.*'
         line: "Image=docker.io/pgsty/minio:{{ minio_release_tag }}"
         state: present
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 
     - name: Update registry quadlet image
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/registry.container"
+        path: "{{ openchami_quadlet_dir }}/registry.container"
         regexp: '^Image=.*'
         line: "Image=docker.io/library/registry:{{ registry_tag }}"
         state: present
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 
     - name: Update acme-register quadlet image
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/acme-register.container"
+        path: "{{ openchami_quadlet_dir }}/acme-register.container"
         regexp: '^Image=.*'
         line: "Image=docker.io/neilpang/acme.sh:{{ acme_tag }}"
         state: present
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 
     - name: Update acme-deploy quadlet image
       ansible.builtin.lineinfile:
-        path: "/etc/containers/systemd/acme-deploy.container"
+        path: "{{ openchami_quadlet_dir }}/acme-deploy.container"
         regexp: '^Image=.*'
         line: "Image=docker.io/neilpang/acme.sh:{{ acme_tag }}"
         state: present
       delegate_to: oim
-      delegate_facts: true
       connection: ssh
       failed_when: false
 

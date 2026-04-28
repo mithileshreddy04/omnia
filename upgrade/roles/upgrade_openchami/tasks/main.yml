@@ -36,6 +36,9 @@
         - name: Preserve OpenCHAMI data
           ansible.builtin.include_tasks: preserve_openchami_data.yml
 
+        - name: Ensure CoreDNS Corefile exists for v2.2
+          ansible.builtin.include_tasks: update_openchami_target.yml
+
         - name: Upgrade OpenCHAMI containers
           ansible.builtin.include_tasks: upgrade_openchami_containers.yml
 
