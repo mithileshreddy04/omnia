@@ -113,12 +113,12 @@
       connection: ssh
       failed_when: false
 
-    # WHY: haproxy was :latest in v2.1 — now pinned per G-008.
-    - name: Update haproxy quadlet image (pin from latest)
+    # WHY: haproxy was :latest in v2.1 — remains :latest but without tag per G-008.
+    - name: Update haproxy quadlet image (remove :latest tag)
       ansible.builtin.lineinfile:
         path: "{{ openchami_quadlet_dir }}/haproxy.container"
         regexp: '^Image=.*'
-        line: "Image=cgr.dev/chainguard/haproxy:{{ haproxy_tag }}"
+        line: "Image=cgr.dev/chainguard/haproxy"
         state: present
       delegate_to: oim
       connection: ssh
