@@ -6,7 +6,6 @@ PartOf=openchami.target
 
 [Container]
 ContainerName=coresmd-coredns
-
 HostName=coresmd-coredns
 Image=ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}
 
@@ -17,13 +16,15 @@ AddCapability=NET_ADMIN
 AddCapability=NET_RAW
 
 # Volumes
-Volume=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/root_ca/root_ca.crt:ro,Z
+# WHY :z (lowercase) on CA bundle: SYSTEM-SHARED file used by coredhcp + coredns.
+# :Z would relabel with private MCS categories causing AVC denials on the other container.
+Volume=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/root_ca/root_ca.crt:ro,z
+# WHY :Z (uppercase) on Corefile: container-specific config, private relabel is safe.
 Volume=/etc/openchami/configs/Corefile:/Corefile:ro,Z
 
 # Networks for the Container to use
 Network=host
 
-# Unsupported by generator options
 # Proxy settings
 PodmanArgs=--http-proxy=false
 

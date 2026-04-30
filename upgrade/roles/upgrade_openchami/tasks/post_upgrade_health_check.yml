@@ -29,19 +29,24 @@
   tags: [openchami, upgrade, healthcheck, envvars]
   block:
 
+    # WHY 15s not 60s: Stabilization already completed in upgrade_openchami_containers.yml
+    # Phase F (until/retries/delay). This is just a brief settle period.
     - name: Wait for service initialization
       ansible.builtin.pause:
-        seconds: 60
+        seconds: 15
 
     # ---- 1. Verify critical containers are running (v2.2) ----------------
     - name: Verify all critical OpenCHAMI containers are running (v2.2)
       ansible.builtin.shell: |
-        set -o pipefail
-        podman ps --filter "name=^{{ item }}$" --format '{% raw %}{{.Names}}{% endraw %}'
+        state=$(podman inspect {{ item }} --format '{% raw %}{{.State.Status}}{% endraw %}' 2>/dev/null || echo "missing")
+        echo "{{ item }}=$state"
+        [ "$state" = "running" ]
       loop: "{{ openchami_v22_critical_containers }}"
       register: post_container_check
+      retries: 5
+      delay: 10
+      until: post_container_check.rc == 0
       changed_when: false
-      failed_when: item not in (post_container_check.stdout | default(''))
       delegate_to: oim
       connection: ssh
 
@@ -147,6 +152,18 @@
       register: post_coredns_active
       changed_when: false
       failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    # WHY: Confirms the SELinux :z fix on CA bundle is working post-upgrade.
+    # Zero AVC denials expected for coredhcp/coredns after the fix.
+    - name: Check for SELinux AVC denials on coresmd containers
+      ansible.builtin.shell: |
+        count=$(ausearch -m AVC -ts recent 2>/dev/null | grep -cE 'coredhcp|coredns' || echo "0")
+        echo "selinux_avc_denials=$count"
+      register: post_selinux_check
+      changed_when: false
+      failed_when: (post_selinux_check.stdout | regex_search('selinux_avc_denials=(\d+)', '\1') | first | int) > 0
       delegate_to: oim
       connection: ssh
 

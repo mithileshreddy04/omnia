@@ -53,24 +53,29 @@
           The upgrade MUST NOT use admin_nic_ip. Use auto-detected interface/IP instead.
       when: "'CLEAN' not in final_admin_audit.stdout"
 
-    # ---- 2. HARD GATE: NO :latest tags ----------------------------------
-    - name: Check for containers running with :latest tag
+    # ---- 2. HARD GATE: NO unexpected :latest tags ------------------------
+    # WHY exclude haproxy and hydra-gen-jwks: haproxy intentionally has no
+    # pinned version (resolves to :latest). hydra-gen-jwks uses the curl
+    # image which is also :latest. Only minio-server and registry must be pinned.
+    - name: Check for unexpected containers running with :latest tag
       ansible.builtin.shell: |
-        podman ps --format '{{.Names}} {{.Image}}' | grep ':latest' || true
+        podman ps --format '{% raw %}{{.Names}} {{.Image}}{% endraw %}' | 
+          grep ':latest' | grep -vE '^(haproxy|hydra-gen-jwks) ' || true
       register: latest_check
       changed_when: false
       delegate_to: oim
       connection: ssh
 
-    - name: FAIL if containers running with :latest tag
+    - name: FAIL if unexpected containers running with :latest tag
       ansible.builtin.fail:
         msg: |
-          CRITICAL FAILURE: Containers running with :latest tag detected.
+          CRITICAL FAILURE: Unexpected containers running with :latest tag detected.
+          (haproxy and hydra-gen-jwks are excluded — they intentionally use :latest)
           
           {{ latest_check.stdout }}
           
-          All images must use pinned versions. Force-pull failed or cache not cleared.
-      when: latest_check.stdout | length > 0
+          All other images must use pinned versions. Force-pull failed or cache not cleared.
+      when: latest_check.stdout | trim | length > 0
 
     # ---- 3. HARD GATE: NO failed services --------------------------------
     - name: Check for failed services
@@ -220,7 +225,7 @@
           - "========================================="
           - ""
           - "✓ NO admin_nic_ip references found"
-          - "✓ NO containers running with :latest tags"
+          - "✓ NO unexpected containers running with :latest tags (haproxy/curl excluded)"
           - "✓ NO services in failed state"
           - "✓ aardvark-dns is running"
           - "✓ CoreDNS NOT bound to 0.0.0.0:53"

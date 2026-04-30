@@ -6,7 +6,6 @@ PartOf=openchami.target
 
 [Container]
 ContainerName=coresmd-coredhcp
-
 HostName=coresmd-coredhcp
 Image=ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}
 
@@ -15,13 +14,18 @@ AddCapability=NET_ADMIN
 AddCapability=NET_RAW
 
 # Volumes
-Volume=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/root_ca/root_ca.crt:ro,Z
+# WHY :z (lowercase) on CA bundle: This is a SYSTEM-SHARED file mounted by multiple
+# containers (coredhcp + coredns). Using :Z (uppercase/private) causes Podman to relabel
+# with container-specific MCS categories on each restart, producing AVC denials:
+#   denied { read } for comm="coredhcp" name="tls-ca-bundle.pem"
+# :z (shared) allows multiple containers to read the same file concurrently.
+Volume=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem:/root_ca/root_ca.crt:ro,z
+# WHY :Z (uppercase) on config: coredhcp.yaml is container-specific, private relabel is safe.
 Volume=/etc/openchami/configs/coredhcp.yaml:/etc/coredhcp/config.yaml:ro,Z
 
 # Networks for the Container to use
 Network=host
 
-# Unsupported by generator options
 # Proxy settings
 PodmanArgs=--http-proxy=false
 
