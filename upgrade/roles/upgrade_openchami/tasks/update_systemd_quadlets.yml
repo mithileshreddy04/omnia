@@ -91,7 +91,7 @@
     #   default-cluster: <cluster_name>
     - name: Read cluster name from ochami CLI config
       ansible.builtin.shell: |
-        python3 -c "
+        python3 << 'EOF'
 import yaml, sys
 try:
     with open('/etc/ochami/config.yaml') as f:
@@ -117,7 +117,7 @@ try:
     sys.exit(1)
 except Exception:
     sys.exit(1)
-"
+EOF
       register: ochami_cluster_fqdn
       changed_when: false
       failed_when: false
