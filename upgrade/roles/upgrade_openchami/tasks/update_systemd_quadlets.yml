@@ -91,33 +91,34 @@
     #   default-cluster: <cluster_name>
     - name: Read cluster name from ochami CLI config
       ansible.builtin.shell: |
+        set -o pipefail
         python3 << 'EOF'
-import yaml, sys
-try:
-    with open('/etc/ochami/config.yaml') as f:
-        cfg = yaml.safe_load(f)
-    default_name = cfg.get('default-cluster', '')
-    clusters = cfg.get('clusters', [])
-    if default_name:
-        match = next((c for c in clusters if c.get('name') == default_name), None)
-        if match:
-            uri = match.get('cluster', {}).get('uri', '')
-            import re
-            m = re.search(r'https?://([^:/]+)', uri)
-            if m:
-                print(m.group(1))
-                sys.exit(0)
-    if clusters:
-        uri = clusters[0].get('cluster', {}).get('uri', '')
-        import re
-        m = re.search(r'https?://([^:/]+)', uri)
-        if m:
-            print(m.group(1))
-            sys.exit(0)
-    sys.exit(1)
-except Exception:
-    sys.exit(1)
-EOF
+        import yaml, sys
+        try:
+            with open('/etc/ochami/config.yaml') as f:
+                cfg = yaml.safe_load(f)
+            default_name = cfg.get('default-cluster', '')
+            clusters = cfg.get('clusters', [])
+            if default_name:
+                match = next((c for c in clusters if c.get('name') == default_name), None)
+                if match:
+                    uri = match.get('cluster', {}).get('uri', '')
+                    import re
+                    m = re.search(r'https?://([^:/]+)', uri)
+                    if m:
+                        print(m.group(1))
+                        sys.exit(0)
+            if clusters:
+                uri = clusters[0].get('cluster', {}).get('uri', '')
+                import re
+                m = re.search(r'https?://([^:/]+)', uri)
+                if m:
+                    print(m.group(1))
+                    sys.exit(0)
+            sys.exit(1)
+        except Exception:
+            sys.exit(1)
+        EOF
       register: ochami_cluster_fqdn
       changed_when: false
       failed_when: false
