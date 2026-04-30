@@ -291,3 +291,33 @@ upgrade_messages:
       - Container logs: podman logs <container_name>
       - Service status: systemctl status openchami.target
       - API endpoints: curl -k https://localhost:8443/hsm/v2/State/Components
+
+# ===========================================================================
+# Recipe Persistence — v2.2 deployment-recipes on the OIM
+# ===========================================================================
+# WHY: Without persisting v2.2 recipes to the core path, future operations
+# (prepare_oim re-runs, oim_cleanup, discovery) silently revert to v2.1.
+
+# v2.2 deployment-recipes git metadata (from prepare_oim/roles/deploy_containers/openchami/vars/main.yml)
+openchami_git_repo: "https://github.com/OpenCHAMI/deployment-recipes.git"
+openchami_v22_git_version: "bf1f6dfdc7f6107a4227568987faedb1b79b95fa"
+
+# Backup path for v2.1 recipes before overwrite
+openchami_recipes_backup_dir: "{{ openchami_backup_base_dir }}/deployment-recipes"
+
+# v2.2 RPM versions (from deployment-recipes/dell/podman-quadlets/roles/configs/defaults/main.yaml)
+openchami_v22_rpm_url: "https://github.com/OpenCHAMI/release/releases/download/v0.1.2/openchami-0.1.2.rpm"
+openchami_v22_rpm_name: "openchami-0.1.2.rpm"
+ochami_v22_client_rpm_url: "https://github.com/OpenCHAMI/ochami/releases/download/v0.7.1/ochami_0.7.1_linux_amd64.rpm"
+ochami_v22_client_rpm_name: "ochami_0.7.1_linux_amd64.rpm"
+
+# Config vars path written by prepare_oim (templates configs.yaml.j2)
+openchami_config_vars_path: "/opt/omnia/openchami/configs_vars.yaml"
+
+# Version metadata persisted after successful upgrade
+openchami_version_metadata_path: "/opt/omnia/.data/openchami_version.json"
+openchami_target_version: "2.2.0.0"
+openchami_source_version: "2.1.0.0"
+
+# Container prune safety — max age for stale containers
+openchami_prune_age: "24h"

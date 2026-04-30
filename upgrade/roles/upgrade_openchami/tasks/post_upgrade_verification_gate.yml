@@ -216,7 +216,86 @@
           - "Cluster DNS test result: {{ cluster_dns_test.stdout }}"
           - "Note: This may fail if no nodes are registered in SMD yet"
 
-    # ---- 9. SUCCESS: All gates passed ------------------------------------
+    # ---- 9. HARD GATE: Deployment recipes at core path match v2.2 --------
+    - name: Verify deployment-recipes at core path are v2.2
+      ansible.builtin.command: git -C "{{ openchami_clone_path }}" rev-parse HEAD
+      register: recipes_rev_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if recipes at core path are not v2.2
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: Deployment recipes at {{ openchami_clone_path }} are not v2.2.
+
+          Current revision: {{ recipes_rev_check.stdout | default('N/A') }}
+          Expected revision: {{ openchami_v22_git_version }}
+
+          Future prepare_oim runs will use wrong recipes. Re-run upgrade to fix.
+      when:
+        - recipes_rev_check.rc == 0
+        - recipes_rev_check.stdout | trim != openchami_v22_git_version
+
+    - name: Verify v2.2 Corefile template exists in recipes
+      ansible.builtin.stat:
+        path: "{{ openchami_clone_path }}/dell/podman-quadlets/roles/configs/templates/coredns/Corefile.j2"
+      register: v22_corefile_in_recipes
+      delegate_to: oim
+      connection: ssh
+
+    - name: FAIL if v2.2 Corefile template missing from recipes
+      ansible.builtin.fail:
+        msg: |
+          CRITICAL FAILURE: v2.2 Corefile template not found in deployment recipes.
+
+          Expected at: {{ openchami_clone_path }}/dell/podman-quadlets/roles/configs/templates/coredns/Corefile.j2
+
+          This is the key indicator that v2.2 recipes are properly deployed.
+      when: not (v22_corefile_in_recipes.stat.exists | default(false))
+
+    # ---- 10. SOFT CHECK: Version metadata exists --------------------------
+    - name: Verify version metadata was written
+      ansible.builtin.stat:
+        path: "{{ openchami_version_metadata_path }}"
+      register: version_metadata_exists
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display version metadata status
+      ansible.builtin.debug:
+        msg: "Version metadata: {{ 'present' if version_metadata_exists.stat.exists | default(false) else 'MISSING (non-fatal)' }}"
+
+    # ---- 11. SOFT CHECK: MinIO buckets accessible -------------------------
+    - name: Test MinIO bucket accessibility
+      ansible.builtin.shell: |
+        podman exec minio-server mc ls local/ 2>/dev/null && echo "MINIO_OK" || echo "MINIO_WARN"
+      register: minio_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display MinIO status
+      ansible.builtin.debug:
+        msg: "MinIO accessibility: {{ 'OK' if 'MINIO_OK' in minio_check.stdout else 'WARNING - check MinIO health' }}"
+
+    # ---- 12. SOFT CHECK: TLS certs from step-ca remain valid --------------
+    - name: Verify step-ca certificate validity
+      ansible.builtin.shell: |
+        podman exec step-ca step certificate inspect /home/step/certs/root_ca.crt --short 2>/dev/null | grep -E 'Not After' || echo "CERT_CHECK_SKIP"
+      register: cert_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Display TLS cert status
+      ansible.builtin.debug:
+        msg: "TLS cert validity: {{ cert_check.stdout | trim }}"
+
+    # ---- SUCCESS: All gates passed ----------------------------------------
     - name: Display verification success
       ansible.builtin.debug:
         msg:
@@ -224,12 +303,19 @@
           - "POST-UPGRADE VERIFICATION GATE: PASSED"
           - "========================================="
           - ""
-          - "✓ NO admin_nic_ip references found"
-          - "✓ NO unexpected containers running with :latest tags (haproxy/curl excluded)"
-          - "✓ NO services in failed state"
-          - "✓ aardvark-dns is running"
-          - "✓ CoreDNS NOT bound to 0.0.0.0:53"
-          - "✓ All critical services are active"
-          - "✓ Inter-container DNS resolution works"
+          - "HARD GATES:"
+          - "  [PASS] NO admin_nic_ip references found"
+          - "  [PASS] NO unexpected containers running with :latest tags (haproxy/curl excluded)"
+          - "  [PASS] NO services in failed state"
+          - "  [PASS] aardvark-dns is running"
+          - "  [PASS] CoreDNS NOT bound to 0.0.0.0:53"
+          - "  [PASS] All critical services are active"
+          - "  [PASS] Inter-container DNS resolution works"
+          - "  [PASS] Deployment recipes at core path are v2.2"
+          - ""
+          - "SOFT CHECKS:"
+          - "  [INFO] Version metadata: {{ 'present' if version_metadata_exists.stat.exists | default(false) else 'missing' }}"
+          - "  [INFO] MinIO: {{ 'accessible' if 'MINIO_OK' in minio_check.stdout | default('') else 'check health' }}"
+          - "  [INFO] TLS certs: {{ cert_check.stdout | default('not checked') | trim }}"
           - ""
           - "Upgrade end-state matches fresh v2.2 deployment requirements."

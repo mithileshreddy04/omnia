@@ -60,6 +60,34 @@
       ansible.builtin.set_fact:
         upgrade_needed: "{{ 'UPGRADE_NEEDED' in upgrade_check_result.stdout }}"
 
+    # WHY: Even if containers are at v2.2, the recipes at core path may
+    # still be v2.1 (if a previous run failed during persistence).
+    # Also check RPM versions for completeness.
+    - name: Check deployment-recipes version at core path
+      ansible.builtin.command: git -C "{{ openchami_clone_path }}" rev-parse HEAD
+      register: recipes_version_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Check openchami RPM version
+      ansible.builtin.command: rpm -q openchami
+      register: openchami_rpm_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Extend upgrade_needed if recipes or RPMs need updating
+      ansible.builtin.set_fact:
+        upgrade_needed: true
+      when:
+        - not (upgrade_needed | bool)
+        - >-
+          (recipes_version_check.stdout | default('') | trim != openchami_v22_git_version)
+          or ('0.1.2' not in (openchami_rpm_check.stdout | default('')))
+
     - name: Display upgrade status
       ansible.builtin.debug:
         msg: "{{ upgrade_messages.idempotency.skip_message }}"

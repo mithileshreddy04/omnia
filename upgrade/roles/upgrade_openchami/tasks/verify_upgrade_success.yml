@@ -31,12 +31,14 @@
       delegate_to: oim
       connection: ssh
 
-    - name: Verify no containers running with :latest tag
+    # WHY exclude haproxy and hydra-gen-jwks: haproxy intentionally has no
+    # pinned version. hydra-gen-jwks uses curlimages/curl:latest by design.
+    - name: Verify no unexpected containers running with :latest tag
       ansible.builtin.shell: |
-        podman ps --format "{{.Names}} {{.Image}}" | grep ":latest" || true
+        podman ps --format "{% raw %}{{.Names}} {{.Image}}{% endraw %}" | grep ":latest" | grep -vE '^(haproxy|hydra-gen-jwks) ' || true
       register: latest_containers
       changed_when: false
-      failed_when: latest_containers.stdout | length > 0
+      failed_when: latest_containers.stdout | trim | length > 0
       delegate_to: oim
       connection: ssh
 
@@ -77,10 +79,10 @@
         systemctl list-dependencies omnia.target --no-pager | grep -E "^×|^\s+×" || echo "None"
         echo ""
         echo "=== CONTAINERS WITH :LATEST TAGS ==="
-        podman ps --format "{{.Names}} {{.Image}}" | grep ":latest" || echo "None"
+        podman ps --format "{% raw %}{{.Names}} {{.Image}}{% endraw %}" | grep ":latest" | grep -vE '^(haproxy|hydra-gen-jwks) ' || echo "None"
         echo ""
         echo "=== ALL CONTAINERS ==="
-        podman ps --format "table {{.Names}}\t{{.Status}}\t{{.Image}}"
+        podman ps --format "table {% raw %}{{.Names}}\t{{.Status}}\t{{.Image}}{% endraw %}"
         echo ""
         echo "=== CORESMD SERVICE STATUS ==="
         systemctl status coresmd-coredhcp.service --no-pager -l || true

@@ -109,6 +109,36 @@
       delegate_to: oim
       connection: ssh
 
+    # ---- 5a. Backup v2.1 deployment-recipes from core path ---------------
+    # WHY: The core path will be overwritten with v2.2 recipes during
+    # the persistence phase. This backup enables rollback of recipes.
+    - name: Create recipes backup directory
+      ansible.builtin.file:
+        path: "{{ openchami_recipes_backup_dir }}"
+        state: directory
+        mode: "{{ dir_permissions_755 }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Backup v2.1 deployment-recipes from core path
+      ansible.builtin.shell: |
+        set -o pipefail
+        if [ -d "{{ openchami_clone_path }}" ]; then
+          cp -a "{{ openchami_clone_path }}" "{{ openchami_recipes_backup_dir }}/deployment-recipes.bak"
+          echo "BACKED_UP: {{ openchami_clone_path }}"
+        else
+          echo "SKIP: {{ openchami_clone_path }} not found"
+        fi
+      register: recipes_backup_result
+      changed_when: "'BACKED_UP' in recipes_backup_result.stdout"
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Log recipes backup result
+      ansible.builtin.debug:
+        msg: "{{ recipes_backup_result.stdout }}"
+
     # ---- 6. PostgreSQL dump (SMD + BSS databases) ------------------------
     - name: Dump PostgreSQL databases via pg_dump
       ansible.builtin.shell: |
