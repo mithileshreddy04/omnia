@@ -8,6 +8,10 @@ PartOf=openchami.target
 ContainerName=coresmd-coredhcp
 HostName=coresmd-coredhcp
 Image=ghcr.io/openchami/coresmd:{{ openchami_coresmd_tag }}
+# WHY Exec=/coredhcp: The coresmd image default entrypoint is /coredns.
+# Without this, the coredhcp container runs /coredns, which immediately exits
+# because no Corefile is mounted, leaving the container in 'missing' state.
+Exec=/coredhcp
 
 # Capabilities
 AddCapability=NET_ADMIN

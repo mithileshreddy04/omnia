@@ -77,6 +77,65 @@
       connection: ssh
       failed_when: false
 
+    # WHY: cloud-init v1.3.0 requires -cluster-name on startup or exits with error.
+    # The openchami RPM installs the quadlet without this flag (was optional in v1.2.x).
+    # Without it the container starts then immediately exits, causing openchami.target
+    # to cycle in a restart loop every ~15 seconds.
+    # APPROACH: Read cluster FQDN from /etc/ochami/config.yaml (written by prepare_oim)
+    # instead of requiring it as an Ansible variable in the upgrade context.
+    # ochami config.yaml structure (from deployment-recipes template):
+    #   clusters:
+    #     - cluster:
+    #         uri: https://<fqdn>:8443
+    #       name: <cluster_name>
+    #   default-cluster: <cluster_name>
+    - name: Read cluster name from ochami CLI config
+      ansible.builtin.shell: |
+        python3 -c "
+import yaml, sys
+try:
+    with open('/etc/ochami/config.yaml') as f:
+        cfg = yaml.safe_load(f)
+    default_name = cfg.get('default-cluster', '')
+    clusters = cfg.get('clusters', [])
+    if default_name:
+        match = next((c for c in clusters if c.get('name') == default_name), None)
+        if match:
+            uri = match.get('cluster', {}).get('uri', '')
+            import re
+            m = re.search(r'https?://([^:/]+)', uri)
+            if m:
+                print(m.group(1))
+                sys.exit(0)
+    if clusters:
+        uri = clusters[0].get('cluster', {}).get('uri', '')
+        import re
+        m = re.search(r'https?://([^:/]+)', uri)
+        if m:
+            print(m.group(1))
+            sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+"
+      register: ochami_cluster_fqdn
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Patch cloud-init-server quadlet Exec line (add required -cluster-name flag)
+      ansible.builtin.lineinfile:
+        path: "{{ openchami_quadlet_dir }}/cloud-init-server.container"
+        regexp: '^Exec=.*'
+        line: "Exec=/usr/local/bin/cloud-init-server -cluster-name {{ ochami_cluster_fqdn.stdout | trim }}"
+        insertafter: '^Image=.*'
+        state: present
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+      when: ochami_cluster_fqdn.rc == 0 and (ochami_cluster_fqdn.stdout | trim | length) > 0
+
     # ---- Third-party service quadlets ------------------------------------
 
     - name: Update postgres quadlet image
