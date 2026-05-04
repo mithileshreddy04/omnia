@@ -35,7 +35,7 @@
         content: |
           . {
             coresmd {
-              endpoint https://localhost:8443
+              endpoint https://{{ admin_nic_ip }}:8443
               ca_cert /root_ca/root_ca.crt
             }
             forward . 8.8.8.8 1.1.1.1
@@ -49,8 +49,6 @@
       delegate_to: oim
       connection: ssh
       when: not corefile_stat.stat.exists
-      # WHY localhost: CoreDNS runs on same host as HAProxy, so it can reach
-      # the gateway via localhost:8443 without needing admin_nic_ip variable.
 
     - name: Log Corefile status
       ansible.builtin.debug:

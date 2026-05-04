@@ -125,17 +125,53 @@
       delegate_to: oim
       connection: ssh
 
-    - name: Patch cloud-init-server quadlet Exec line (add required --cluster-name flag)
+    - name: Patch cloud-init-server quadlet Exec line (add required flags for v1.3.0)
       ansible.builtin.lineinfile:
         path: "{{ openchami_quadlet_dir }}/cloud-init-server.container"
         regexp: '^Exec=.*'
-        line: "Exec=/usr/local/bin/cloud-init-server --cluster-name {{ ochami_cluster_fqdn.stdout | trim }}"
+        line: "Exec=/usr/local/bin/cloud-init-server --listen 0.0.0.0:27777 --smd-url http://smd:27779 --token-url http://opaal:3333/token --jwks-url http://opaal:3333/keys --cluster-name {{ ochami_cluster_fqdn.stdout | trim }}"
         insertafter: '^Image=.*'
         state: present
       delegate_to: oim
       connection: ssh
       failed_when: false
       when: ochami_cluster_fqdn.rc == 0 and (ochami_cluster_fqdn.stdout | trim | length) > 0
+
+    # WHY: coresmd split in v2.2: single coresmd → coresmd-coredhcp + coresmd-coredns.
+    # These quadlets don't exist in v2.1, so we deploy them from templates.
+    - name: Deploy coresmd-coredhcp quadlet from template (NEW in v2.2)
+      ansible.builtin.template:
+        src: coresmd-coredhcp.container.j2
+        dest: "{{ openchami_quadlet_dir }}/coresmd-coredhcp.container"
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    - name: Deploy coresmd-coredns quadlet from template (NEW in v2.2)
+      ansible.builtin.template:
+        src: coresmd-coredns.container.j2
+        dest: "{{ openchami_quadlet_dir }}/coresmd-coredns.container"
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      connection: ssh
+
+    # WHY: v2.1 has single coresmd.container, v2.2 has split coresmd-coredhcp + coresmd-coredns.
+    # Remove the old quadlet to prevent conflicts.
+    - name: Remove old v2.1 coresmd.container quadlet
+      ansible.builtin.file:
+        path: "{{ openchami_quadlet_dir }}/coresmd.container"
+        state: absent
+      delegate_to: oim
+      connection: ssh
+      failed_when: false
+
+    # WHY: Ensure proper SELinux context on new quadlet files.
+    - name: Restore SELinux context on coresmd quadlets
+      ansible.builtin.command: restorecon {{ openchami_quadlet_dir }}/coresmd-*.container
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
 
     # ---- Third-party service quadlets ------------------------------------
 

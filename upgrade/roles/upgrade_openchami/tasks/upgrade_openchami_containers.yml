@@ -112,6 +112,73 @@
       delegate_to: oim
       connection: ssh
 
+    # Detect cluster boot interface and IP (needed for coredhcp.yaml)
+    - name: Detect cluster boot interface from haproxy container
+      ansible.builtin.shell: |
+        podman inspect haproxy --format '{% raw %}{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}{% endraw %}' 2>/dev/null || echo ""
+      register: haproxy_ip
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Detect cluster boot interface from network configuration
+      ansible.builtin.shell: |
+        ip route | grep default | awk '{print $5}'
+      register: default_interface
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Get IP address of default interface
+      ansible.builtin.shell: |
+        ip addr show {{ default_interface.stdout | default('eth0') }} | grep "inet " | awk '{print $2}' | cut -d/ -f1
+      register: default_interface_ip
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+
+    - name: Set detected cluster boot IP
+      ansible.builtin.set_fact:
+        detected_cluster_boot_ip: "{{ (haproxy_ip.stdout | default('') | length > 0) | ternary(haproxy_ip.stdout, default_interface_ip.stdout | default(cluster_boot_ip | default('10.0.0.1'))) }}"
+        detected_cluster_boot_interface: "{{ default_interface.stdout | default(cluster_boot_interface | default('eth0')) }}"
+
+    # Extract DHCP pool from existing v2.1 coredhcp configuration if it exists
+    - name: Check if v2.1 coredhcp.yaml exists
+      ansible.builtin.stat:
+        path: /etc/openchami/configs/coredhcp.yaml
+      register: coredhcp_config_exists
+      delegate_to: oim
+      connection: ssh
+
+    - name: Read v2.1 coredhcp configuration to extract DHCP pool
+      ansible.builtin.shell: |
+        grep -A1 "bootloop:" /etc/openchami/configs/coredhcp.yaml 2>/dev/null | tail -1 | awk '{print $4 " " $5}'
+      register: v21_dhcp_pool
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      connection: ssh
+      when: coredhcp_config_exists.stat.exists
+
+    - name: Set DHCP pool variables from v2.1 config
+      ansible.builtin.set_fact:
+        coredhcp_dhcp_pool_start: "{{ (v21_dhcp_pool.stdout.split(' ')[0] | default('10.0.0.200')) }}"
+        coredhcp_dhcp_pool_end: "{{ (v21_dhcp_pool.stdout.split(' ')[1] | default('10.0.0.250')) }}"
+      when:
+        - coredhcp_config_exists.stat.exists
+        - v21_dhcp_pool.rc == 0
+        - v21_dhcp_pool.stdout | length > 0
+
+    - name: Set default DHCP pool if v2.1 config not found
+      ansible.builtin.set_fact:
+        coredhcp_dhcp_pool_start: "{{ detected_cluster_boot_ip | default(cluster_boot_ip | default('10.0.0.1')) }}"
+        coredhcp_dhcp_pool_end: "10.0.0.250"
+      when:
+        - not coredhcp_config_exists.stat.exists or v21_dhcp_pool.rc != 0 or v21_dhcp_pool.stdout | length == 0
+
     - name: Deploy CoreDHCP config
       ansible.builtin.template:
         src: coredhcp.yaml.j2
@@ -434,6 +501,9 @@
         echo ""
         echo "=== /etc/openchami/configs/coredhcp.yaml ==="
         cat /etc/openchami/configs/coredhcp.yaml 2>/dev/null || echo "(not found)"
+        echo ""
+        echo "=== /etc/openchami/configs/openchami.env ==="
+        cat /etc/openchami/configs/openchami.env 2>/dev/null || echo "(not found)"
         echo ""
         echo "=== coresmd-coredhcp logs ==="
         podman logs coresmd-coredhcp --tail 20 2>&1 || echo "(not running)"
