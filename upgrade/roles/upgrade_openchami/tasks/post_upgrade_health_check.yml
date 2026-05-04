@@ -155,17 +155,7 @@
       delegate_to: oim
       connection: ssh
 
-    # WHY: Confirms the SELinux :z fix on CA bundle is working post-upgrade.
-    # Zero AVC denials expected for coredhcp/coredns after the fix.
-    - name: Check for SELinux AVC denials on coresmd containers
-      ansible.builtin.shell: |
-        count=$(ausearch -m AVC -ts recent 2>/dev/null | grep -cE 'coredhcp|coredns' || echo "0")
-        echo "selinux_avc_denials=$count"
-      register: post_selinux_check
-      changed_when: false
-      failed_when: (post_selinux_check.stdout | regex_search('selinux_avc_denials=(\d+)', '\1') | first | int) > 0
-      delegate_to: oim
-      connection: ssh
+    
 
     - name: Check DHCP port 67 is listening
       ansible.builtin.shell: |

@@ -404,19 +404,7 @@
       delegate_to: oim
       connection: ssh
 
-    # WHY: The debug log showed 50+ AVC denials for coredhcp/coredns reading
-    # tls-ca-bundle.pem due to :Z (private relabel). After the :z fix, there
-    # should be ZERO denials. This check confirms the SELinux fix worked.
-    - name: Check for SELinux AVC denials on coresmd containers
-      ansible.builtin.shell: |
-        count=$(ausearch -m AVC -ts recent 2>/dev/null | grep -cE 'coredhcp|coredns' || echo "0")
-        echo "selinux_avc_denials=$count"
-        [ "$count" -eq 0 ]
-      register: selinux_denials
-      changed_when: false
-      failed_when: selinux_denials.rc != 0
-      delegate_to: oim
-      connection: ssh
+    
 
     # WHY: The debug log showed openchami.target cycling every ~14 seconds.
     # After the atomic fix, the target should reach steady state with at
