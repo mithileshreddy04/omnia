@@ -179,15 +179,7 @@
       when:
         - not coredhcp_config_exists.stat.exists or v21_dhcp_pool.rc != 0 or v21_dhcp_pool.stdout | length == 0
 
-    - name: Deploy CoreDHCP config
-      ansible.builtin.template:
-        src: coredhcp.yaml.j2
-        dest: /etc/openchami/configs/coredhcp.yaml
-        owner: root
-        group: root
-        mode: '0644'
-      delegate_to: oim
-      connection: ssh
+    
 
     # ====================================================================
     # Phase B — Pull All Images (target still running, no downtime)
