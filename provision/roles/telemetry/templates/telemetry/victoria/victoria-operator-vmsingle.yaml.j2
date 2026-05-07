@@ -25,7 +25,7 @@ spec:
   replicaCount: 1
   
   # Retention period from telemetry_config.yml
-  retentionPeriod: "{{ hostvars['localhost']['victoria_metrics_configurations']['retention_period'] }}h"
+  retentionPeriod: "{{ telemetry_config.telemetry_sinks.victoriametrics.retention_period }}h"
   
   # Storage configuration
   storageDataPath: /victoria-metrics-data
@@ -36,7 +36,7 @@ spec:
           - ReadWriteOnce
         resources:
           requests:
-            storage: {{ hostvars['localhost']['victoria_metrics_configurations']['persistence_size'] }}
+            storage: {{ telemetry_config.telemetry_sinks.victoriametrics.persistence_size }}
   
   # Image configuration
   image:

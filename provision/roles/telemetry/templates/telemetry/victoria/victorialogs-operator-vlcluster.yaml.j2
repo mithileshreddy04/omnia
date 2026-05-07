@@ -30,6 +30,7 @@ spec:
   # ========================
   vlstorage:
     replicaCount: {{ victoria_logs_cluster.vlstorage.replicas }}
+    replicationFactor: 2  # Data redundancy: each log written to 2 of 3 nodes
     image:
       repository: {{ victoria_logs_cluster.vlstorage.image.split(':')[0] }}
       tag: {{ victoria_logs_cluster.vlstorage.image.split(':')[1] }}
@@ -45,7 +46,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: {{ hostvars['localhost']['victoria_logs_configurations']['storage_size'] }}
+              storage: {{ telemetry_config.telemetry_sinks.victoria_logs.storage_size }}
 
     resources:
       requests:
@@ -79,7 +80,7 @@ spec:
         tolerationSeconds: 5
 
     extraArgs:
-      retentionPeriod: "{{ hostvars['localhost']['victoria_logs_configurations']['retention_period'] }}h"
+      retentionPeriod: "{{ telemetry_config.telemetry_sinks.victoria_logs.retention_period }}h"
 {% if victoria_logs_cluster.tls_enabled %}
       tls: "true"
       tlsCertFile: "/etc/victoria/certs/server.crt"
@@ -96,6 +97,8 @@ spec:
               path: server.crt
             - key: tls.key
               path: server.key
+            - key: ca.crt
+              path: ca.crt
     volumeMounts:
       - name: victoria-tls-certs
         mountPath: /etc/victoria/certs

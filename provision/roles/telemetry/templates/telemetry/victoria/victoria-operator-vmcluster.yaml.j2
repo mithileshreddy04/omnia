@@ -12,7 +12,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-# VMCluster - VictoriaMetrics cluster deployment via operator
+# VMCluster - victoria_metrics cluster deployment via operator
 # Managed by victoria-metrics-operator
 
 apiVersion: operator.victoriametrics.com/v1beta1
@@ -22,7 +22,7 @@ metadata:
   namespace: {{ telemetry_namespace }}
 spec:
   # Retention period from telemetry_config.yml
-  retentionPeriod: "{{ hostvars['localhost']['victoria_metrics_configurations']['retention_period'] }}h"
+  retentionPeriod: "{{ telemetry_config.telemetry_sinks.victoria_metrics.retention_period }}h"
   
   # VMStorage configuration
   vmstorage:
@@ -41,7 +41,7 @@ spec:
             - ReadWriteOnce
           resources:
             requests:
-              storage: {{ hostvars['localhost']['victoria_metrics_configurations']['persistence_size'] }}
+              storage: {{ telemetry_config.telemetry_sinks.victoria_metrics.persistence_size }}
     
     # Resource limits
     resources:
