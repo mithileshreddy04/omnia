@@ -30,31 +30,15 @@
     name: slurm_custom_aarch64
   failed_when: false
 
-- name: Extract CUDA runfile name for x86_64 from slurm_custom.json
-  ansible.builtin.set_fact:
-    cuda_runfile_x86_64: "{{ (slurm_custom_x86_64.slurm_node.cluster | selectattr('package', 'equalto', 'cuda-run') | first).url | basename }}"
-  when:
-    - slurm_custom_x86_64 is defined
-    - slurm_custom_x86_64.slurm_node is defined
-    - slurm_custom_x86_64.slurm_node.cluster | selectattr('package', 'equalto', 'cuda-run') | list | length > 0
-
-- name: Extract CUDA runfile name for aarch64 from slurm_custom.json
-  ansible.builtin.set_fact:
-    cuda_runfile_aarch64: "{{ (slurm_custom_aarch64.slurm_node.cluster | selectattr('package', 'equalto', 'cuda-run') | first).url | basename }}"
-  when:
-    - slurm_custom_aarch64 is defined
-    - slurm_custom_aarch64.slurm_node is defined
-    - slurm_custom_aarch64.slurm_node.cluster | selectattr('package', 'equalto', 'cuda-run') | list | length > 0
-
 - name: Set facts for slurm
   ansible.builtin.set_fact:
     nfs_storage_name: "{{ slurm_cluster[0].nfs_storage_name }}"
 
 - name: Read the slurm mount point
   ansible.builtin.set_fact:
-    share_path: "{{ (nfs_client_params | selectattr('nfs_name', 'equalto', nfs_storage_name) | first).client_share_path }}"
-    nfs_server_ip: "{{ (nfs_client_params | selectattr('nfs_name', 'equalto', nfs_storage_name) | first).server_ip }}"
-    nfs_server_path: "{{ (nfs_client_params | selectattr('nfs_name', 'equalto', nfs_storage_name) | first).server_share_path }}"
+    share_path: "{{ (mounts | selectattr('name', 'equalto', nfs_storage_name) | first).mount_point }}"
+    # nfs_server_ip: "{{ (mounts | selectattr('name', 'equalto', nfs_storage_name) | first).server_ip }}"
+    nfs_server_path: "{{ (mounts | selectattr('name', 'equalto', nfs_storage_name) | first).source }}"
 
 - name: Set facts for slurm
   ansible.builtin.set_fact:
@@ -203,21 +187,21 @@
 
 - name: NFS path for cloud init
   ansible.builtin.set_fact:
-    cloud_init_nfs_path: "{{ nfs_server_ip }}:{{ nfs_server_path }}/slurm"
+    cloud_init_nfs_path: "{{ nfs_server_path }}/slurm"
 
 - name: NFS path for controller trackfile
   ansible.builtin.set_fact:
-    trackfile_nfs_path: "{{ nfs_server_ip }}:{{ nfs_server_path }}/ctld_track"
+    trackfile_nfs_path: "{{ nfs_server_path }}/ctld_track"
 
 - name: NFS path for cloud init
   ansible.builtin.set_fact:
-    cloud_init_nfs_path_openldap: "{{ nfs_server_ip }}:{{ nfs_server_path }}/openldap"
+    cloud_init_nfs_path_openldap: "{{ nfs_server_path }}/openldap"
   when: hostvars['localhost']['openldap_support']
 
 # This will be mounted for ucx, openmpi and ldms configurations on slurm nodes
 - name: NFS path for ucx, openmpi and ldms cloud init
   ansible.builtin.set_fact:
-    cloud_init_slurm_nfs_path: "{{ nfs_server_ip }}:{{ nfs_server_path }}"
+    cloud_init_slurm_nfs_path: "{{ nfs_server_path }}"
     client_mount_path: "{{ share_path }}"
 
 - name: Ensure SSH key directory exists on Slurm share
