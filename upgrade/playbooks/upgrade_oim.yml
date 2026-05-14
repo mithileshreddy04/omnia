@@ -89,68 +89,66 @@
         mode: '0644'
 
     # ── Phase 1: OpenCHAMI Container Upgrade (ESpec §4.4) ──────────────
+    # The upgrade_openchami role handles the full lifecycle:
+    #   pre_upgrade_health_check → upgrade_openchami_containers → post_upgrade_health_check
+    # It delegates all container operations to the 'oim' host via SSH.
+    # On failure, the role's upgrade_status.yml raises ansible.builtin.fail,
+    # which lands in the rescue block below.
+    # On skip (not deployed / already at target), the role completes normally
+    # and sets openchami_deployed / upgrade_needed facts accordingly.
     - name: "Phase 1 — OpenCHAMI Container Upgrade"
       block:
-        # Step 1: Verify OpenCHAMI container
-        # TODO: Implement Verify OpenCHAMI container checks
-        - name: Verify OpenCHAMI container
-          ansible.builtin.debug:
-            msg: "TODO: Verify OpenCHAMI container"
+        - name: Upgrade OpenCHAMI containers and services
+          ansible.builtin.include_role:
+            name: upgrade_openchami
 
-        # Step 2: PostgreSQL backup (pg_dump)
-        # TODO: Implement pg_dump backup of OpenCHAMI database
-        - name: Backup PostgreSQL database (pg_dump)
+        - name: Display OpenCHAMI upgrade outcome
           ansible.builtin.debug:
-            msg: "TODO: pg_dump backup of OpenCHAMI DB to {{ manifest.backup_dir | default('/opt/omnia/backups') }}"
+            msg: >-
+              OpenCHAMI Phase 1 result —
+              deployed={{ openchami_deployed | default(false) }},
+              upgrade_needed={{ upgrade_needed | default(true) }},
+              failed={{ openchami_upgrade_failed | default(false) }}
 
-        # Step 3: Update deployment-recipes to target version
-        # TODO: git checkout target tag in /opt/omnia/deployment-recipes
-        - name: Update deployment-recipes to target version
-          ansible.builtin.debug:
-            msg: "TODO: git checkout {{ manifest.target_version | default('2.2.0.0') }} in deployment-recipes"
-
-        # Step 4: Pull new container images
-        # TODO: Pull OpenCHAMI container images for target version
-        - name: Pull OpenCHAMI container images
-          ansible.builtin.debug:
-            msg: "TODO: Pull OpenCHAMI container images for {{ manifest.target_version | default('2.2.0.0') }}"
-
-        # Step 5: Ordered restart of OpenCHAMI services
-        # TODO: systemctl daemon-reload + restart in correct order
-        - name: Ordered restart of OpenCHAMI services
-          ansible.builtin.debug:
-            msg: "TODO: daemon-reload + ordered restart (postgres → smd → bss → cloud-init-server)"
-
-        # Step 6: Database migration (if schema changes)
-        # TODO: Run any required DB migration scripts
-        - name: Run database migration
-          ansible.builtin.debug:
-            msg: "TODO: Run OpenCHAMI DB migration scripts if schema changes exist"
-
-        # Step 7: Post-upgrade validation
-        # TODO: Validate SMD, BSS, S3, node inventory
-        - name: Validate OpenCHAMI services post-upgrade
-          ansible.builtin.debug:
-            msg: "TODO: Validate SMD API, BSS API, S3 storage, node inventory intact"
-
+        # Only update version tracking when an upgrade actually took place.
+        # Skipped when OpenCHAMI was not deployed or was already at target.
         - name: Update version.yml with target version
           ansible.builtin.debug:
             msg: "TODO: Update /opt/omnia/.data/version.yml with OpenCHAMI {{ manifest.target_version | default('2.2.0.0') }}"
+          when:
+            - openchami_deployed | default(false) | bool
+            - upgrade_needed | default(true) | bool
 
       rescue:
+        # Re-read the manifest file to capture any intermediate writes
+        # (e.g., the in-progress status set earlier in this play).
+        - name: Re-read upgrade_manifest.yml after failure
+          ansible.builtin.slurp:
+            src: "{{ manifest_path }}"
+          register: rescue_raw_manifest
+
+        - name: Parse current manifest state
+          ansible.builtin.set_fact:
+            rescue_manifest: "{{ rescue_raw_manifest.content | b64decode | from_yaml }}"
+
         - name: OpenCHAMI upgrade failed — mark component as failed
           ansible.builtin.copy:
             content: >-
-              {{ manifest | combine({
-                   'component_status': manifest.component_status | combine({
+              {{ rescue_manifest | combine({
+                   'component_status': rescue_manifest.component_status | combine({
                      component_name: 'failed'
                    })
                  }) | to_nice_yaml }}
             dest: "{{ manifest_path }}"
             mode: '0644'
+
         - name: Fail with OpenCHAMI upgrade error
           ansible.builtin.fail:
-            msg: "OpenCHAMI upgrade failed. Check logs and consider running rollback."
+            msg: >-
+              OpenCHAMI upgrade failed
+              ({{ rescue_manifest.source_version | default('N/A') }} →
+              {{ rescue_manifest.target_version | default('N/A') }}).
+              Check logs and consider running rollback.
 
     # ── Phase 2: BuildStream Container Upgrade (conditional) ────────────
     - name: Check if build_stream_config.yml exists

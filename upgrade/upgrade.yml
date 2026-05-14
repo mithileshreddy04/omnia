@@ -203,6 +203,12 @@
     openchami_vars_suppport: false
     omnia_metadata_support: true
 
+- name: Create OIM group for SSH connection
+  ansible.builtin.import_playbook: ../utils/create_container_group.yml
+  tags: always
+  vars:
+    oim_group: true
+
 # ──────────────────────────────────────────────────────────────────────
 # Sub-flow imports (each sub-flow reads upgrade_manifest.yml and
 # skips if its component_status is already 'completed')
