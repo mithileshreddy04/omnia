@@ -121,6 +121,74 @@
     - name: Pre-upgrade health check
       when: upgrade_needed | default(true) | bool
       block:
+        # ── Verify current OpenCHAMI version from version.yml ─────────
+        - name: Check if version.yml exists
+          ansible.builtin.stat:
+            path: "/opt/omnia/.data/version.yml"
+          register: version_yml_stat
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Read current OpenCHAMI version from version.yml
+          ansible.builtin.slurp:
+            src: "/opt/omnia/.data/version.yml"
+          register: version_yml_raw
+          when: version_yml_stat.stat.exists | default(false)
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Parse version.yml and display current version
+          ansible.builtin.set_fact:
+            current_openchami_version: "{{ (version_yml_raw.content | b64decode | from_yaml).openchami_version | default('unknown') }}"
+          when:
+            - version_yml_stat.stat.exists | default(false)
+            - version_yml_raw.content is defined
+
+        - name: Display current OpenCHAMI version
+          ansible.builtin.debug:
+            msg: "Current OpenCHAMI version: {{ current_openchami_version | default('not recorded') }}"
+
+        # ── Verify no active provisioning jobs ────────────────────────
+        - name: Check for active provisioning jobs via BSS
+          ansible.builtin.shell: |
+            set -o pipefail
+            curl -sk https://localhost:8443/boot/v1/bootparameters 2>/dev/null | \
+            grep -c '"kernel"' || echo "0"
+          register: bss_active_params
+          changed_when: false
+          failed_when: false
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Check for running discovery processes
+          ansible.builtin.shell: |
+            set -o pipefail
+            ps aux | grep -E 'discovery|provision' | grep -v grep || echo "none"
+          register: active_provision_check
+          changed_when: false
+          failed_when: false
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Display provisioning status
+          ansible.builtin.debug:
+            msg:
+              - "BSS boot parameters configured: {{ bss_active_params.stdout | default('0') | trim }}"
+              - "Active provisioning processes: {{ 'none detected' if 'none' in active_provision_check.stdout | default('none') else 'WARNING: provisioning may be active' }}"
+
+        - name: Warn if provisioning appears active
+          ansible.builtin.debug:
+            msg: |
+              WARNING: Provisioning activity detected. It is recommended to pause
+              node provisioning before upgrading OpenCHAMI to avoid disruption.
+          when:
+            - active_provision_check.stdout is defined
+            - "'none' not in active_provision_check.stdout"
+
         - name: Verify all OpenCHAMI containers are running
           ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
           loop: "{{ openchami_critical_containers }}"
@@ -146,11 +214,15 @@
           ansible.builtin.shell: |
             set -o pipefail
             podman exec postgres psql -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
-          register: pre_upgrade_node_count
+          register: pre_upgrade_node_count_raw
           changed_when: false
           delegate_to: oim
           delegate_facts: true
           connection: ssh
+
+        - name: Set pre_upgrade_node_count fact for use across task files
+          ansible.builtin.set_fact:
+            pre_upgrade_node_count: "{{ pre_upgrade_node_count_raw.stdout | default('0') }}"
 
         - name: Display pre-upgrade health check success
           ansible.builtin.debug:

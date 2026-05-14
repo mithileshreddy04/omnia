@@ -1,0 +1,210 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ============================================================================
+# migrate_database.yml — Post-Upgrade Database Migration & Integrity Check
+# ============================================================================
+# Runs AFTER containers have been restarted with new images.
+# Validates database schema and verifies data integrity by comparing
+# pre-upgrade baselines.
+#
+# The HMS database (hmsds) may require schema updates when SMD is upgraded.
+# SMD applies its own migrations on startup — this task file verifies they
+# completed successfully and validates the result.
+#
+# Flow:
+#   1. Wait for PostgreSQL readiness
+#   2. Verify core schema objects exist (smd.xname, smd.components, etc.)
+#   3. Inspect SMD logs for migration failures
+#   4. Validate data integrity (node count, component count)
+#   5. Report migration status
+# ============================================================================
+
+- name: Post-upgrade database migration and integrity check
+  block:
+    # ── Read manifest for backup directory ─────────────────────────────
+    - name: Read upgrade_manifest.yml for backup_dir
+      ansible.builtin.slurp:
+        src: "{{ manifest_path }}"
+      register: migration_raw_manifest
+
+    - name: Parse manifest for backup_dir
+      ansible.builtin.set_fact:
+        migration_backup_dir: "{{ (migration_raw_manifest.content | b64decode | from_yaml).backup_dir | default(openchami_backup_dir_default) }}"
+
+    # ── Wait for PostgreSQL to be fully ready ──────────────────────────
+    - name: Wait for PostgreSQL to accept connections
+      ansible.builtin.shell: |
+        set -o pipefail
+        for i in $(seq 1 {{ db_migration_max_wait_attempts }}); do
+          if podman exec postgres pg_isready -d hmsds 2>/dev/null; then
+            echo "ready"
+            exit 0
+          fi
+          sleep {{ db_migration_wait_interval }}
+        done
+        echo "timeout"
+        exit 1
+      register: pg_ready_result
+      changed_when: false
+      failed_when: pg_ready_result.rc != 0
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Verify core HMS schema objects ─────────────────────────────────
+    # SMD creates these tables on first startup and may alter them during
+    # upgrades. We verify the essential tables exist post-upgrade.
+    - name: Verify HMS core schema tables exist
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres psql -d hmsds -t -c "
+          SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'smd'
+          ORDER BY table_name;
+        " 2>&1
+      register: schema_tables
+      changed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Check that required HMS tables are present
+      ansible.builtin.assert:
+        that:
+          - "'xname' in schema_tables.stdout"
+        fail_msg: >-
+          Required HMS table 'smd.xname' not found after upgrade.
+          Tables found: {{ schema_tables.stdout | default('none') | trim }}
+          This may indicate SMD failed to initialize its schema.
+        success_msg: "HMS schema verified — core tables present."
+
+    # ── Check for pending SMD schema migrations ────────────────────────
+    # SMD applies its own migrations on startup. Verify it completed
+    # by checking the SMD container logs for migration success markers.
+    - name: Check SMD startup logs for migration status
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman logs smd --since "5m" 2>&1 | tail -100
+      register: smd_logs
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Detect SMD migration failures in logs
+      ansible.builtin.fail:
+        msg: >-
+          SMD logs indicate a database migration failure:
+          {{ smd_logs.stdout | default('') }}
+          Please check SMD container logs for details: podman logs smd
+      when:
+        - smd_logs.stdout is defined
+        - "'FATAL' in smd_logs.stdout or 'migration failed' in (smd_logs.stdout | lower)"
+
+    # ── Validate data integrity ────────────────────────────────────────
+    - name: Query post-migration node count
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres psql -d hmsds -t -c \
+          "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+      register: post_migration_node_count
+      changed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Verify node count preserved across migration
+      ansible.builtin.assert:
+        that:
+          - (post_migration_node_count.stdout | trim | int) >= (pre_upgrade_node_count | default('0') | trim | int)
+        fail_msg: >-
+          Node count decreased after migration!
+          Pre-upgrade: {{ pre_upgrade_node_count | default('0') | trim }}
+          Post-migration: {{ post_migration_node_count.stdout | trim }}
+          Database may have data loss. Consider restoring from pg_dump backup.
+        success_msg: >-
+          Node count verified —
+          Pre-upgrade: {{ pre_upgrade_node_count | default('0') | trim }},
+          Post-migration: {{ post_migration_node_count.stdout | trim }}
+      when: pre_upgrade_node_count is defined
+
+    # ── Verify SMD API responds with correct data ──────────────────────
+    - name: Verify SMD API health endpoint
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec haproxy wget -qO- --no-check-certificate \
+          https://localhost:8443/hsm/v2/service/ready 2>/dev/null || \
+        curl -sk https://localhost:8443/hsm/v2/service/ready 2>/dev/null || \
+        echo "unreachable"
+      register: smd_api_health
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display SMD API health status
+      ansible.builtin.debug:
+        msg: >-
+          SMD API health check:
+          {{ smd_api_health.stdout | default('no response') | trim }}
+          (non-critical — API may still be initializing)
+
+    # ── Verify BSS API responds ────────────────────────────────────────
+    - name: Verify BSS API health endpoint
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec haproxy wget -qO- --no-check-certificate \
+          https://localhost:8443/boot/v1/service/status 2>/dev/null || \
+        curl -sk https://localhost:8443/boot/v1/service/status 2>/dev/null || \
+        echo "unreachable"
+      register: bss_api_health
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display BSS API health status
+      ansible.builtin.debug:
+        msg: >-
+          BSS API health check:
+          {{ bss_api_health.stdout | default('no response') | trim }}
+          (non-critical — API may still be initializing)
+
+    # ── Report migration summary ───────────────────────────────────────
+    - name: Display database migration summary
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════"
+          - "  DATABASE MIGRATION COMPLETED"
+          - "════════════════════════════════════════════"
+          - "PostgreSQL: ready"
+          - "HMS schema: verified"
+          - "SMD startup: verified (no migration failures in logs)"
+          - "Node count — Pre: {{ pre_upgrade_node_count | default('N/A') | trim }}, Post: {{ post_migration_node_count.stdout | trim }}"
+          - "SMD API: {{ 'responding' if ('unreachable' not in smd_api_health.stdout | default('unreachable')) else 'initializing' }}"
+          - "BSS API: {{ 'responding' if ('unreachable' not in bss_api_health.stdout | default('unreachable')) else 'initializing' }}"
+
+  rescue:
+    - name: Database migration failed
+      ansible.builtin.fail:
+        msg: >-
+          Database migration or integrity check failed after container upgrade.
+          Pre-upgrade backup is available at: {{ migration_backup_dir }}/openchami/postgresql_backup/openchami.sql
+          To restore: podman exec -i postgres psql -d hmsds < openchami.sql
+          {{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}

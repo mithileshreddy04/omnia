@@ -17,9 +17,19 @@
 dir_permissions_755: "0755"
 file_permissions_644: "0644"
 
+# Manifest path for upgrade state tracking
+manifest_path: "/opt/omnia/.data/upgrade_manifest.yml"
+
 # OpenCHAMI snapshot configuration
 openchami_snapshot_base_dir: "/opt/omnia/openchami/upgrade_snapshots"
 openchami_snapshot_dir: "{{ openchami_snapshot_base_dir }}/{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '') }}"
+
+# Default backup directory (used when manifest.backup_dir is not available)
+openchami_backup_dir_default: "/opt/omnia/backups/upgrade/version_2.1.0.0"
+
+# Database migration settings
+db_migration_max_wait_attempts: 30
+db_migration_wait_interval: 2
 
 # OpenCHAMI pre-upgrade critical containers (must be running before upgrade)
 # NOTE: In omnia-2.1, coresmd was a single container. It is not included here
@@ -205,6 +215,17 @@ upgrade_messages:
     skip_message: "OpenCHAMI containers are already at target versions. Skipping upgrade."
     upgrade_needed: "OpenCHAMI upgrade required. Containers need updating."
     check_failure: "Failed to determine upgrade status. Proceeding with upgrade to be safe."
+  backup:
+    success: |
+      Pre-upgrade backup completed successfully.
+      PostgreSQL dump, configs, quadlets, and RPMs have been saved.
+    failure: |
+      Pre-upgrade backup FAILED. Aborting upgrade to prevent data loss.
+      Please check disk space and permissions on the backup directory.
+    pgdump_failure: |
+      PostgreSQL pg_dump failed or produced an empty backup.
+      Aborting upgrade — database backup is required before proceeding.
+      Verify postgres is running: podman exec postgres pg_isready
   health_check:
     pre_check_success: "Pre-upgrade health check passed. All OpenCHAMI services are healthy."
     pre_check_failure: "Pre-upgrade health check failed. OpenCHAMI services are not healthy."
@@ -232,3 +253,8 @@ upgrade_messages:
       Review the following:
       - Container logs: podman logs <container_name>
       - Service status: systemctl status openchami.target
+      - Database: podman exec postgres pg_isready
+      - Systemd deps: systemctl list-dependencies openchami.target
+      - ochami CLI: ochami smd component get
+      - S3 buckets: s3cmd -c /opt/omnia/openchami/s3/.s3cfg ls
+      - BSS boot params: curl -sk https://localhost:8443/boot/v1/bootparameters

@@ -1,0 +1,348 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ============================================================================
+# backup_openchami.yml — Pre-Upgrade Backup for OpenCHAMI Components
+# ============================================================================
+# Creates a point-in-time snapshot of all OpenCHAMI state on the OIM BEFORE
+# the container upgrade begins. Used for rollback recovery if upgrade fails.
+#
+# Backup structure on OIM:
+#   {{ openchami_backup_dir }}/openchami/
+#     postgresql_backup/openchami.sql   - pg_dump of hmsds database
+#     configs_vars.yaml                 - cluster config source-of-truth
+#     quadlets/                         - all .container quadlet unit files
+#     configs/                          - Corefile, coredhcp.yaml, etc.
+#     workdir/                          - downloaded RPMs (for rollback)
+#     openchami.target                  - systemd target unit
+#   {{ openchami_backup_dir }}/openchami_backup_manifest.yml
+#
+# All operations delegate to the OIM host via SSH since that is where
+# podman containers, PostgreSQL, quadlet files, and configs reside.
+# ============================================================================
+
+- name: Pre-upgrade OpenCHAMI backup
+  block:
+    # ── Resolve backup directory from upgrade manifest ─────────────────
+    - name: Read upgrade_manifest.yml for backup_dir
+      ansible.builtin.slurp:
+        src: "{{ manifest_path }}"
+      register: backup_raw_manifest
+
+    - name: Parse manifest and set backup directory
+      ansible.builtin.set_fact:
+        backup_manifest: "{{ backup_raw_manifest.content | b64decode | from_yaml }}"
+
+    - name: Set backup base directory
+      ansible.builtin.set_fact:
+        openchami_backup_dir: "{{ backup_manifest.backup_dir | default(openchami_backup_dir_default) }}"
+
+    # ── Verify disk space for pg_dump (df on backup target) ────────────
+    - name: Check available disk space on backup target
+      ansible.builtin.shell: |
+        set -o pipefail
+        df -BG "{{ openchami_backup_dir | dirname }}" | tail -1 | awk '{print $4}' | sed 's/G//'
+      register: backup_disk_space_gb
+      changed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Get current PostgreSQL database size
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres psql -d hmsds -t -c \
+          "SELECT pg_size_pretty(pg_database_size('hmsds'));" 2>/dev/null || echo "unknown"
+      register: postgres_db_size
+      changed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display disk space status
+      ansible.builtin.debug:
+        msg:
+          - "Backup target: {{ openchami_backup_dir }}"
+          - "Available space: {{ backup_disk_space_gb.stdout | default('unknown') | trim }}GB"
+          - "PostgreSQL database size: {{ postgres_db_size.stdout | default('unknown') | trim }}"
+
+    - name: Verify sufficient disk space for backup
+      ansible.builtin.assert:
+        that:
+          - (backup_disk_space_gb.stdout | default('0') | trim | int) >= 5
+        fail_msg: |
+          Insufficient disk space for backup!
+          Available: {{ backup_disk_space_gb.stdout | default('0') | trim }}GB
+          Minimum required: 5GB
+          Please free up space on {{ openchami_backup_dir | dirname }} before proceeding.
+        success_msg: "Sufficient disk space available for backup ({{ backup_disk_space_gb.stdout | default('0') | trim }}GB)"
+
+    # ── Create backup directory tree on OIM ────────────────────────────
+    - name: Create backup directory structure on OIM
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "{{ dir_permissions_755 }}"
+      loop:
+        - "{{ openchami_backup_dir }}/openchami/postgresql_backup"
+        - "{{ openchami_backup_dir }}/openchami/quadlets"
+        - "{{ openchami_backup_dir }}/openchami/configs"
+        - "{{ openchami_backup_dir }}/openchami/workdir"
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── PostgreSQL pg_dump ─────────────────────────────────────────────
+    # Dump the hmsds database inside the postgres container, then copy
+    # the SQL file out to the backup directory on OIM.
+    - name: Dump PostgreSQL hmsds database inside container
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres pg_dump -d hmsds --clean --if-exists \
+          -f /tmp/openchami_pre_upgrade.sql 2>&1
+      register: pgdump_result
+      changed_when: pgdump_result.rc == 0
+      failed_when: pgdump_result.rc != 0
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Copy pg_dump from postgres container to OIM filesystem
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman cp postgres:/tmp/openchami_pre_upgrade.sql \
+          "{{ openchami_backup_dir }}/openchami/postgresql_backup/openchami.sql"
+      register: pgdump_copy_result
+      changed_when: pgdump_copy_result.rc == 0
+      failed_when: pgdump_copy_result.rc != 0
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Clean up temporary pg_dump file inside container
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman exec postgres rm -f /tmp/openchami_pre_upgrade.sql
+      changed_when: true
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Verify pg_dump output exists on OIM
+      ansible.builtin.stat:
+        path: "{{ openchami_backup_dir }}/openchami/postgresql_backup/openchami.sql"
+      register: pgdump_stat
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Fail if pg_dump backup is missing or empty
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.backup.pgdump_failure }}"
+      when: not pgdump_stat.stat.exists or pgdump_stat.stat.size == 0
+
+    # ── Backup configs_vars.yaml ───────────────────────────────────────
+    - name: Check if configs_vars.yaml exists on OIM
+      ansible.builtin.stat:
+        path: "{{ openchami_config_vars_path }}"
+      register: config_vars_stat_backup
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Backup configs_vars.yaml on OIM
+      ansible.builtin.copy:
+        src: "{{ openchami_config_vars_path }}"
+        dest: "{{ openchami_backup_dir }}/openchami/configs_vars.yaml"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      when: config_vars_stat_backup.stat.exists
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Backup quadlet .container files ────────────────────────────────
+    - name: Find all quadlet .container files on OIM
+      ansible.builtin.find:
+        paths: "/etc/containers/systemd"
+        patterns: "*.container"
+        file_type: file
+      register: quadlet_files_found
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Backup each quadlet file to backup directory
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ openchami_backup_dir }}/openchami/quadlets/{{ item.path | basename }}"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      loop: "{{ quadlet_files_found.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Backup OpenCHAMI config files ──────────────────────────────────
+    - name: Check if OpenCHAMI config directory exists on OIM
+      ansible.builtin.stat:
+        path: "{{ openchami_config_dir }}"
+      register: config_dir_stat
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Find all config files in OpenCHAMI config directory
+      ansible.builtin.find:
+        paths: "{{ openchami_config_dir }}"
+        file_type: file
+      register: config_files_found
+      when: config_dir_stat.stat.exists | default(false)
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Backup each config file
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ openchami_backup_dir }}/openchami/configs/{{ item.path | basename }}"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      loop: "{{ config_files_found.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: config_dir_stat.stat.exists | default(false)
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Backup workdir RPM files ───────────────────────────────────────
+    - name: Check if workdir exists on OIM
+      ansible.builtin.stat:
+        path: "{{ openchami_work_dir }}"
+      register: workdir_stat
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Find RPM files in workdir
+      ansible.builtin.find:
+        paths: "{{ openchami_work_dir }}"
+        patterns: "*.rpm"
+        file_type: file
+      register: rpm_files_found
+      when: workdir_stat.stat.exists | default(false)
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Backup each RPM file
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ openchami_backup_dir }}/openchami/workdir/{{ item.path | basename }}"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      loop: "{{ rpm_files_found.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when: workdir_stat.stat.exists | default(false)
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Backup openchami.target unit ───────────────────────────────────
+    - name: Check if openchami.target exists on OIM
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/openchami.target"
+      register: openchami_target_stat
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Backup openchami.target
+      ansible.builtin.copy:
+        src: "/etc/systemd/system/openchami.target"
+        dest: "{{ openchami_backup_dir }}/openchami/openchami.target"
+        remote_src: true
+        mode: "{{ file_permissions_644 }}"
+      when: openchami_target_stat.stat.exists
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Create backup manifest with inventory ──────────────────────────
+    - name: Create backup inventory manifest
+      ansible.builtin.copy:
+        content: |
+          # OpenCHAMI Pre-Upgrade Backup Manifest
+          backup_timestamp: "{{ ansible_date_time.iso8601 }}"
+          source_version: "{{ backup_manifest.source_version | default('unknown') }}"
+          target_version: "{{ backup_manifest.target_version | default('unknown') }}"
+          upgrade_id: "{{ backup_manifest.upgrade_id | default('unknown') }}"
+          backup_dir: "{{ openchami_backup_dir }}"
+
+          postgresql_backup:
+            file: "openchami/postgresql_backup/openchami.sql"
+            database: "hmsds"
+            size_bytes: {{ pgdump_stat.stat.size | default(0) }}
+            pre_upgrade_node_count: {{ pre_upgrade_node_count | default('0') | trim }}
+
+          configs_vars:
+            file: "openchami/configs_vars.yaml"
+            present: {{ config_vars_stat_backup.stat.exists | default(false) }}
+
+          quadlet_files_count: {{ quadlet_files_found.matched | default(0) }}
+          quadlet_files:
+          {% for f in quadlet_files_found.files | default([]) %}
+            - "{{ f.path | basename }}"
+          {% endfor %}
+
+          config_files_count: {{ config_files_found.files | default([]) | length }}
+          config_files:
+          {% for f in config_files_found.files | default([]) %}
+            - "{{ f.path | basename }}"
+          {% endfor %}
+
+          rpm_files_count: {{ rpm_files_found.files | default([]) | length }}
+          rpm_files:
+          {% for f in rpm_files_found.files | default([]) %}
+            - "{{ f.path | basename }}"
+          {% endfor %}
+
+          openchami_target_backed_up: {{ openchami_target_stat.stat.exists | default(false) }}
+        dest: "{{ openchami_backup_dir }}/openchami_backup_manifest.yml"
+        mode: "{{ file_permissions_644 }}"
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display backup completion summary
+      ansible.builtin.debug:
+        msg:
+          - "Pre-upgrade backup completed successfully."
+          - "Backup location: {{ openchami_backup_dir }}/openchami/"
+          - "PostgreSQL dump: {{ pgdump_stat.stat.size | default(0) }} bytes"
+          - "Quadlet files: {{ quadlet_files_found.matched | default(0) }}"
+          - "Config files: {{ config_files_found.files | default([]) | length }}"
+          - "RPM files: {{ rpm_files_found.files | default([]) | length }}"
+          - "openchami.target: {{ openchami_target_stat.stat.exists | default(false) }}"
+
+  rescue:
+    - name: Backup failed — abort upgrade to prevent data loss
+      ansible.builtin.fail:
+        msg: "{{ upgrade_messages.backup.failure }}"

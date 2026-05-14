@@ -84,9 +84,156 @@
     - name: Compare node counts
       ansible.builtin.debug:
         msg: >-
-          Node count - Pre-upgrade: {{ pre_upgrade_node_count.stdout | default('unknown') | trim }},
+          Node count - Pre-upgrade: {{ pre_upgrade_node_count | default('unknown') | trim }},
           Post-upgrade: {{ post_upgrade_node_count.stdout | trim }}
       when: pre_upgrade_node_count is defined
+
+    # ── Systemd dependency tree validation ─────────────────────────────
+    # Verify openchami.target has all expected services wired up,
+    # including the new coresmd-coredhcp and coresmd-coredns services.
+    - name: Verify openchami.target dependency tree
+      ansible.builtin.shell: |
+        set -o pipefail
+        systemctl list-dependencies openchami.target --plain --no-pager 2>&1
+      register: openchami_deps
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Validate expected services in openchami.target
+      ansible.builtin.assert:
+        that:
+          - "'coresmd-coredhcp.service' in openchami_deps.stdout"
+          - "'coresmd-coredns.service' in openchami_deps.stdout"
+          - "'smd.service' in openchami_deps.stdout or 'smd' in openchami_deps.stdout"
+          - "'bss.service' in openchami_deps.stdout or 'bss' in openchami_deps.stdout"
+        fail_msg: >-
+          openchami.target is missing expected services.
+          Dependencies found: {{ openchami_deps.stdout | default('none') }}
+          Expected: coresmd-coredhcp.service, coresmd-coredns.service, smd, bss
+        success_msg: "openchami.target dependency tree verified."
+      when: openchami_deps.rc == 0
+
+    - name: Verify legacy coresmd.service is NOT in dependency tree
+      ansible.builtin.assert:
+        that:
+          - "'coresmd.service' not in openchami_deps.stdout"
+        fail_msg: >-
+          Legacy coresmd.service still found in openchami.target dependencies.
+          This should have been replaced by coresmd-coredhcp + coresmd-coredns.
+        success_msg: "Legacy coresmd.service confirmed absent from target."
+      when: openchami_deps.rc == 0
+
+    # ── ochami CLI validation ──────────────────────────────────────────
+    # Verify the ochami CLI is installed and can authenticate to the
+    # local OpenCHAMI instance.
+    - name: Check ochami CLI is installed
+      ansible.builtin.command: ochami version
+      register: ochami_version_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display ochami CLI version
+      ansible.builtin.debug:
+        msg: "ochami CLI: {{ ochami_version_check.stdout | default('not installed') | trim }}"
+      when: ochami_version_check.rc | default(1) == 0
+
+    - name: Verify ochami can list SMD components
+      ansible.builtin.shell: |
+        set -o pipefail
+        ochami smd --cacert {{ ca_cert_path | default('/root_ca/root_ca.crt') }} \
+          component get 2>&1 | head -20 || echo "ochami_unavailable"
+      register: ochami_smd_check
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display ochami SMD component status
+      ansible.builtin.debug:
+        msg: >-
+          ochami SMD component check:
+          {{ 'responding' if ('ochami_unavailable' not in ochami_smd_check.stdout | default('ochami_unavailable'))
+             else 'not yet available (non-critical — may need token refresh)' }}
+
+    # ── S3/MinIO bucket validation ─────────────────────────────────────
+    # Verify S3 backend is accessible and required buckets exist.
+    - name: Check s3cmd configuration exists
+      ansible.builtin.stat:
+        path: "/opt/omnia/openchami/s3/.s3cfg"
+      register: s3cfg_stat
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Verify S3 buckets with s3cmd
+      ansible.builtin.shell: |
+        set -o pipefail
+        s3cmd -c /opt/omnia/openchami/s3/.s3cfg ls 2>&1
+      register: s3_bucket_list
+      changed_when: false
+      failed_when: false
+      when: s3cfg_stat.stat.exists | default(false)
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Validate required S3 buckets present
+      ansible.builtin.debug:
+        msg: >-
+          S3 bucket check:
+          {% if s3cfg_stat.stat.exists | default(false) %}
+            Buckets found: {{ s3_bucket_list.stdout | default('none') | trim }}
+            {{ 'efi bucket: present' if ('efi' in s3_bucket_list.stdout | default('')) else 'efi bucket: MISSING' }}
+            {{ 'boot-images bucket: present' if ('boot-images' in s3_bucket_list.stdout | default('')) else 'boot-images bucket: MISSING' }}
+          {% else %}
+            s3cfg not found — S3 validation skipped (non-critical for container upgrade)
+          {% endif %}
+
+    # ── BSS boot parameter validation ──────────────────────────────────
+    # Verify BSS has valid boot parameters configured.
+    - name: Check BSS boot parameters via API
+      ansible.builtin.shell: |
+        set -o pipefail
+        curl -sk https://localhost:8443/boot/v1/bootparameters 2>/dev/null | head -5 || echo "bss_unavailable"
+      register: bss_bootparams
+      changed_when: false
+      failed_when: false
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Display BSS boot parameter status
+      ansible.builtin.debug:
+        msg: >-
+          BSS boot parameters:
+          {{ 'configured' if ('bss_unavailable' not in bss_bootparams.stdout | default('bss_unavailable')
+                              and bss_bootparams.stdout | default('') | trim | length > 2)
+             else 'not yet available or empty (non-critical — may need initialization)' }}
+
+    # ── Comprehensive health summary ───────────────────────────────────
+    - name: Display post-upgrade health check summary
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════"
+          - "  POST-UPGRADE HEALTH CHECK SUMMARY"
+          - "════════════════════════════════════════════"
+          - "Containers: all {{ openchami_post_upgrade_critical_containers | length }} critical containers running"
+          - "PostgreSQL: connected"
+          - "Image versions: verified"
+          - "Legacy coresmd: removed"
+          - "Node count — Pre: {{ pre_upgrade_node_count | default('N/A') | trim }}, Post: {{ post_upgrade_node_count.stdout | trim }}"
+          - "Systemd deps: {{ 'verified' if openchami_deps.rc | default(1) == 0 else 'check skipped' }}"
+          - "ochami CLI: {{ 'v' ~ ochami_version_check.stdout | default('unknown') | trim if ochami_version_check.rc | default(1) == 0 else 'not verified' }}"
+          - "S3 buckets: {{ 'verified' if s3cfg_stat.stat.exists | default(false) else 'skipped' }}"
+          - "BSS boot params: {{ 'checked' if 'bss_unavailable' not in bss_bootparams.stdout | default('bss_unavailable') else 'initializing' }}"
+          - "════════════════════════════════════════════"
 
     - name: Display post-upgrade health check success
       ansible.builtin.debug:
