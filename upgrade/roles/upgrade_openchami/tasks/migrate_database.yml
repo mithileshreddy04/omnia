@@ -150,10 +150,7 @@
     - name: Verify SMD API health endpoint
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec haproxy wget -qO- --no-check-certificate \
-          {{ openchami_smd_endpoint }}/service/ready 2>/dev/null || \
-        curl -sk {{ openchami_smd_endpoint }}/service/ready 2>/dev/null || \
-        echo "unreachable"
+        curl -s {{ openchami_smd_endpoint }}/service/ready 2>/dev/null || echo "unreachable"
       register: smd_api_health
       changed_when: false
       failed_when: false
@@ -172,10 +169,7 @@
     - name: Verify BSS API health endpoint
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec haproxy wget -qO- --no-check-certificate \
-          {{ openchami_bss_endpoint }}/service/status 2>/dev/null || \
-        curl -sk {{ openchami_bss_endpoint }}/service/status 2>/dev/null || \
-        echo "unreachable"
+        curl -s {{ openchami_bss_endpoint }}/service/status 2>/dev/null || echo "unreachable"
       register: bss_api_health
       changed_when: false
       failed_when: false

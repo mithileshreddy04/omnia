@@ -158,7 +158,7 @@
         - name: Check for active provisioning jobs via BSS
           ansible.builtin.shell: |
             set -o pipefail
-            curl -sk {{ openchami_bss_endpoint }}/bootparameters 2>/dev/null | \
+            curl -s {{ openchami_bss_endpoint }}/bootparameters 2>/dev/null | \
             grep -c '"kernel"' || echo "0"
           register: bss_active_params
           changed_when: false
@@ -218,7 +218,7 @@
         - name: Verify SMD API is accessible
           ansible.builtin.shell: |
             set -o pipefail
-            curl -sk {{ openchami_smd_endpoint }}/service/ready 2>/dev/null || echo "unreachable"
+            curl -s {{ openchami_smd_endpoint }}/service/ready 2>/dev/null || echo "unreachable"
           register: pre_smd_api_check
           changed_when: false
           failed_when: "'unreachable' in pre_smd_api_check.stdout"
@@ -230,7 +230,7 @@
         - name: Verify BSS API is accessible
           ansible.builtin.shell: |
             set -o pipefail
-            curl -sk {{ openchami_bss_endpoint }}/service/status 2>/dev/null || echo "unreachable"
+            curl -s {{ openchami_bss_endpoint }}/service/status 2>/dev/null || echo "unreachable"
           register: pre_bss_api_check
           changed_when: false
           failed_when: "'unreachable' in pre_bss_api_check.stdout"
