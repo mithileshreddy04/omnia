@@ -13,6 +13,9 @@
 # limitations under the License.
 ---
 
+- name: Resolve admin NIC IP for OpenCHAMI API endpoints
+  ansible.builtin.include_tasks: resolve_admin_ip.yml
+
 - name: OpenCHAMI upgrade workflow
   block:
     - name: Pre-upgrade health check

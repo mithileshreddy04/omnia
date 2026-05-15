@@ -24,6 +24,13 @@ manifest_path: "/opt/omnia/.data/upgrade_manifest.yml"
 openchami_snapshot_base_dir: "/opt/omnia/openchami/upgrade_snapshots"
 openchami_snapshot_dir: "{{ openchami_snapshot_base_dir }}/{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '') }}"
 
+# OpenCHAMI API endpoints
+# admin_nic_ip is resolved at runtime by resolve_admin_ip.yml from configs_vars.yaml
+# or network_spec.yml. These endpoint variables use it for all API health checks.
+openchami_smd_endpoint: "https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2"
+openchami_bss_endpoint: "https://{{ admin_nic_ip | default('localhost') }}:8443/boot/v1"
+openchami_base_url: "https://{{ admin_nic_ip | default('localhost') }}:8443"
+
 # Default backup directory (used when manifest.backup_dir is not available)
 openchami_backup_dir_default: "/opt/omnia/backups/upgrade/version_2.1.0.0"
 
@@ -252,6 +259,7 @@ upgrade_messages:
       Please resolve issues before retrying upgrade:
       - Check container status: podman ps -a
       - Check container logs: podman logs <container_name>
+      - Verify network connectivity: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
       - Check systemd status: systemctl status openchami.target
     container_upgrade_diagnosis: |
       Check container logs for errors:
@@ -267,4 +275,5 @@ upgrade_messages:
       - Systemd deps: systemctl list-dependencies openchami.target
       - ochami CLI: ochami smd component get
       - S3 buckets: s3cmd -c /opt/omnia/openchami/s3/.s3cfg ls
-      - BSS boot params: curl -sk https://localhost:8443/boot/v1/bootparameters
+      - API endpoints: curl -k https://{{ admin_nic_ip | default('localhost') }}:8443/hsm/v2/State/Components
+      - BSS boot params: curl -sk https://{{ admin_nic_ip | default('localhost') }}:8443/boot/v1/bootparameters

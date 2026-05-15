@@ -1,0 +1,112 @@
+# Copyright 2026 Dell Inc. or its subsidiaries. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+
+# ============================================================================
+# resolve_admin_ip.yml — Resolve admin_nic_ip for OpenCHAMI API Endpoints
+# ============================================================================
+# OpenCHAMI services (HAProxy gateway) bind to the admin NIC IP, not localhost.
+# This task reads the already-deployed configs_vars.yaml on the OIM to extract
+# cluster_boot_ip (which IS admin_nic_ip). Falls back to network_spec.yml,
+# then to the system's default IPv4 address.
+#
+# Sets facts: admin_nic_ip
+# Guard: Only runs if admin_nic_ip is not already defined.
+# ============================================================================
+
+- name: Resolve admin_nic_ip for OpenCHAMI endpoints (if not already set)
+  when: admin_nic_ip is not defined or admin_nic_ip | length == 0
+  block:
+    # --- Try configs_vars.yaml on OIM first (most reliable source) ---
+    - name: Check if configs_vars.yaml exists on OIM
+      ansible.builtin.stat:
+        path: "{{ openchami_config_vars_path }}"
+      register: _resolve_config_vars_stat
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Read configs_vars.yaml from OIM
+      ansible.builtin.slurp:
+        src: "{{ openchami_config_vars_path }}"
+      register: _resolve_config_vars_raw
+      when: _resolve_config_vars_stat.stat.exists | default(false)
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    - name: Set admin_nic_ip from configs_vars.yaml cluster_boot_ip
+      ansible.builtin.set_fact:
+        admin_nic_ip: "{{ (_resolve_config_vars_raw.content | b64decode | from_yaml).cluster_boot_ip }}"
+      when:
+        - _resolve_config_vars_stat.stat.exists | default(false)
+        - _resolve_config_vars_raw.content is defined
+        - (_resolve_config_vars_raw.content | b64decode | from_yaml).cluster_boot_ip is defined
+        - (_resolve_config_vars_raw.content | b64decode | from_yaml).cluster_boot_ip | length > 0
+
+    # --- Fallback: read network_spec.yml from input directory ---
+    - name: Fallback — read network_spec.yml for admin IP
+      when: admin_nic_ip is not defined or admin_nic_ip | length == 0
+      block:
+        - name: Check if network_spec.yml exists
+          ansible.builtin.stat:
+            path: "{{ network_spec_path }}"
+          register: _resolve_netspec_stat
+
+        - name: Load network_spec.yml
+          ansible.builtin.include_vars:
+            file: "{{ network_spec_path }}"
+          when: _resolve_netspec_stat.stat.exists | default(false)
+
+        - name: Set admin_nic_ip from network_spec primary_oim_admin_ip
+          ansible.builtin.set_fact:
+            admin_nic_ip: "{{ network_data.admin_network.primary_oim_admin_ip }}"
+          when:
+            - _resolve_netspec_stat.stat.exists | default(false)
+            - network_data is defined
+            - network_data.admin_network is defined
+            - network_data.admin_network.primary_oim_admin_ip is defined
+
+    # --- Last resort: use OIM's default IPv4 address ---
+    - name: Last resort — get default IPv4 from OIM
+      when: admin_nic_ip is not defined or admin_nic_ip | length == 0
+      block:
+        - name: Get OIM default IPv4 address
+          ansible.builtin.shell: |
+            set -o pipefail
+            hostname -I | awk '{print $1}'
+          register: _resolve_oim_ip
+          changed_when: false
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Set admin_nic_ip from OIM default IPv4
+          ansible.builtin.set_fact:
+            admin_nic_ip: "{{ _resolve_oim_ip.stdout | trim }}"
+          when: _resolve_oim_ip.stdout | default('') | trim | length > 0
+
+    - name: Display resolved admin_nic_ip
+      ansible.builtin.debug:
+        msg: "Resolved admin_nic_ip: {{ admin_nic_ip | default('UNRESOLVED') }}"
+
+    - name: Fail if admin_nic_ip could not be resolved
+      ansible.builtin.fail:
+        msg: |
+          Could not resolve admin_nic_ip for OpenCHAMI API endpoints.
+          Checked: configs_vars.yaml ({{ openchami_config_vars_path }}),
+                   network_spec.yml ({{ network_spec_path }}),
+                   OIM default IPv4.
+          Please ensure configs_vars.yaml or network_spec.yml is available.
+      when: admin_nic_ip is not defined or admin_nic_ip | length == 0
