@@ -27,6 +27,16 @@ openchami_snapshot_dir: "{{ openchami_snapshot_base_dir }}/{{ ansible_date_time.
 # Default backup directory (used when manifest.backup_dir is not available)
 openchami_backup_dir_default: "/opt/omnia/backups/upgrade/version_2.1.0.0"
 
+# PostgreSQL database settings
+# These are fallback defaults only — actual credentials are dynamically
+# retrieved from the postgres container's POSTGRES_MULTIPLE_DATABASES env var
+# at runtime by pre_upgrade_health_check.yml (retrieve_postgres_credentials task).
+# Format of POSTGRES_MULTIPLE_DATABASES: "dbname:dbuser:password,..."
+# The first entry (hmsds) is used for all HMS/SMD database operations.
+postgres_db_user: "ochami"
+postgres_db_name: "hmsds"
+postgres_env_file: "/etc/openchami/configs/openchami.env"
+
 # Database migration settings
 db_migration_max_wait_attempts: 30
 db_migration_wait_interval: 2
@@ -225,7 +235,7 @@ upgrade_messages:
     pgdump_failure: |
       PostgreSQL pg_dump failed or produced an empty backup.
       Aborting upgrade — database backup is required before proceeding.
-      Verify postgres is running: podman exec postgres pg_isready
+      Verify postgres is running: podman exec postgres pg_isready -U {{ postgres_db_user }}
   health_check:
     pre_check_success: "Pre-upgrade health check passed. All OpenCHAMI services are healthy."
     pre_check_failure: "Pre-upgrade health check failed. OpenCHAMI services are not healthy."

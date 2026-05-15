@@ -34,6 +34,10 @@
 
 - name: Post-upgrade database migration and integrity check
   block:
+    # ── Retrieve PostgreSQL credentials if not already set ─────────────
+    - name: Retrieve PostgreSQL credentials
+      ansible.builtin.include_tasks: retrieve_postgres_credentials.yml
+
     # ── Read manifest for backup directory ─────────────────────────────
     - name: Read upgrade_manifest.yml for backup_dir
       ansible.builtin.slurp:
@@ -49,7 +53,7 @@
       ansible.builtin.shell: |
         set -o pipefail
         for i in $(seq 1 {{ db_migration_max_wait_attempts }}); do
-          if podman exec postgres pg_isready -d hmsds 2>/dev/null; then
+          if podman exec postgres pg_isready -U {{ postgres_db_user }} -d {{ postgres_db_name }} 2>/dev/null; then
             echo "ready"
             exit 0
           fi
@@ -70,7 +74,7 @@
     - name: Verify HMS core schema tables exist
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres psql -d hmsds -t -c "
+        podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c "
           SELECT table_name FROM information_schema.tables
           WHERE table_schema = 'smd'
           ORDER BY table_name;
@@ -119,7 +123,7 @@
     - name: Query post-migration node count
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres psql -d hmsds -t -c \
+        podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c \
           "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
       register: post_migration_node_count
       changed_when: false
@@ -206,5 +210,5 @@
         msg: >-
           Database migration or integrity check failed after container upgrade.
           Pre-upgrade backup is available at: {{ migration_backup_dir }}/openchami/postgresql_backup/openchami.sql
-          To restore: podman exec -i postgres psql -d hmsds < openchami.sql
+          To restore: podman exec -i postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} < openchami.sql
           {{ upgrade_messages.troubleshooting.container_upgrade_diagnosis }}

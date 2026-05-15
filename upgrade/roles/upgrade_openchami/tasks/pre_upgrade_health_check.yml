@@ -117,6 +117,10 @@
           ansible.builtin.debug:
             msg: "{{ upgrade_messages.idempotency.check_failure }}"
 
+    # --- Retrieve PostgreSQL credentials from container environment ---
+    - name: Retrieve PostgreSQL credentials
+      ansible.builtin.include_tasks: retrieve_postgres_credentials.yml
+
     # --- Pre-upgrade health verification ---
     - name: Pre-upgrade health check
       when: upgrade_needed | default(true) | bool
@@ -210,10 +214,62 @@
           delegate_facts: true
           connection: ssh
 
+        # ── Verify SMD API accessible ────────────────────────────────────
+        - name: Verify SMD API is accessible
+          ansible.builtin.shell: |
+            set -o pipefail
+            curl -sk https://localhost:8443/hsm/v2/service/ready 2>/dev/null || echo "unreachable"
+          register: pre_smd_api_check
+          changed_when: false
+          failed_when: "'unreachable' in pre_smd_api_check.stdout"
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        # ── Verify BSS API accessible ────────────────────────────────────
+        - name: Verify BSS API is accessible
+          ansible.builtin.shell: |
+            set -o pipefail
+            curl -sk https://localhost:8443/boot/v1/service/status 2>/dev/null || echo "unreachable"
+          register: pre_bss_api_check
+          changed_when: false
+          failed_when: "'unreachable' in pre_bss_api_check.stdout"
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        # ── Verify S3/MinIO accessible ───────────────────────────────────
+        - name: Check s3cmd configuration exists
+          ansible.builtin.stat:
+            path: "/opt/omnia/openchami/s3/.s3cfg"
+          register: pre_s3cfg_stat
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Verify S3 is accessible
+          ansible.builtin.shell: |
+            set -o pipefail
+            s3cmd -c /opt/omnia/openchami/s3/.s3cfg ls 2>&1 || echo "s3_unreachable"
+          register: pre_s3_check
+          changed_when: false
+          failed_when: "'s3_unreachable' in pre_s3_check.stdout and 'ERROR' in pre_s3_check.stdout"
+          when: pre_s3cfg_stat.stat.exists | default(false)
+          delegate_to: oim
+          delegate_facts: true
+          connection: ssh
+
+        - name: Display pre-flight API and S3 status
+          ansible.builtin.debug:
+            msg:
+              - "SMD API: {{ 'accessible' if ('unreachable' not in pre_smd_api_check.stdout | default('unreachable')) else 'NOT accessible' }}"
+              - "BSS API: {{ 'accessible' if ('unreachable' not in pre_bss_api_check.stdout | default('unreachable')) else 'NOT accessible' }}"
+              - "S3/MinIO: {{ 'accessible' if (pre_s3cfg_stat.stat.exists | default(false) and 's3_unreachable' not in pre_s3_check.stdout | default('')) else 'skipped or not accessible' }}"
+
         - name: Capture baseline node count from database
           ansible.builtin.shell: |
             set -o pipefail
-            podman exec postgres psql -d hmsds -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+            podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
           register: pre_upgrade_node_count_raw
           changed_when: false
           delegate_to: oim
