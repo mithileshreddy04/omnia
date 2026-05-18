@@ -107,26 +107,32 @@
     # After container restart, SMD may need time to initialize and run
     # database migrations. We wait up to 90 seconds.
     - name: Wait for SMD API to become reachable after upgrade
-      ansible.builtin.shell: |
-        curl -sf -o /dev/null {{ openchami_smd_endpoint }}/service/ready 2>/dev/null && echo "ready" || echo "unreachable"
+      ansible.builtin.uri:
+        url: "{{ openchami_smd_endpoint }}/service/ready"
+        method: GET
+        validate_certs: false
+        status_code: 200
       register: post_smd_api_check
       changed_when: false
       retries: "{{ api_readiness_retries }}"
       delay: "{{ api_readiness_delay }}"
-      until: post_smd_api_check.stdout | trim == 'ready'
+      until: post_smd_api_check.status == 200
       delegate_to: oim
       delegate_facts: true
       connection: ssh
 
     # ── Verify BSS API is reachable (MANDATORY with retries) ───────────
     - name: Wait for BSS API to become reachable after upgrade
-      ansible.builtin.shell: |
-        curl -sf -o /dev/null {{ openchami_bss_endpoint }}/service/status 2>/dev/null && echo "ready" || echo "unreachable"
+      ansible.builtin.uri:
+        url: "{{ openchami_bss_endpoint }}/service/status"
+        method: GET
+        validate_certs: false
+        status_code: 200
       register: post_bss_api_check
       changed_when: false
       retries: "{{ api_readiness_retries }}"
       delay: "{{ api_readiness_delay }}"
-      until: post_bss_api_check.stdout | trim == 'ready'
+      until: post_bss_api_check.status == 200
       delegate_to: oim
       delegate_facts: true
       connection: ssh
@@ -263,11 +269,18 @@
           - "Legacy coresmd: removed"
           - "SMD API: reachable at {{ openchami_smd_endpoint }}"
           - "BSS API: reachable at {{ openchami_bss_endpoint }}"
-          - "Node count — Pre: {{ pre_upgrade_node_count | default('0') | trim }}, Post: {{ post_upgrade_node_count.stdout | default('0') | trim }}{{ ' (prepare_oim-only)' if (pre_upgrade_node_count | default('0') | trim | int) == 0 and (post_upgrade_node_count.stdout | default('0') | trim | int) == 0 else '' }}"
+          - >-
+            Node count — Pre: {{ pre_upgrade_node_count | default('0') | trim }},
+            Post: {{ post_upgrade_node_count.stdout | default('0') | trim }}{{
+            ' (prepare_oim-only)' if (pre_upgrade_node_count | default('0') | trim | int) == 0
+            and (post_upgrade_node_count.stdout | default('0') | trim | int) == 0 else '' }}
           - "Systemd deps: {{ 'verified' if openchami_deps.rc | default(1) == 0 else 'check skipped' }}"
           - "ochami CLI: {{ 'v' ~ ochami_version_check.stdout | default('unknown') | trim if ochami_version_check.rc | default(1) == 0 else 'not installed' }}"
           - "S3 buckets: {{ 'verified' if s3cfg_stat.stat.exists | default(false) else 'not configured (non-fatal)' }}"
-          - "BSS boot params: {{ 'configured' if ('bss_unavailable' not in bss_bootparams.stdout | default('bss_unavailable') and bss_bootparams.stdout | default('') | trim | length > 2) else 'empty (non-fatal — may need initialization)' }}"
+          - >-
+            BSS boot params: {{ 'configured' if ('bss_unavailable' not in
+            bss_bootparams.stdout | default('bss_unavailable') and bss_bootparams.stdout
+            | default('') | trim | length > 2) else 'empty (non-fatal — may need initialization)' }}
           - "════════════════════════════════════════════"
 
     - name: Display post-upgrade health check success

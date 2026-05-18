@@ -240,26 +240,32 @@
         # running but the API is not responding after retries, something
         # is fundamentally wrong and the upgrade must not proceed.
         - name: Wait for SMD API to become reachable
-          ansible.builtin.shell: |
-            curl -sf -o /dev/null {{ openchami_smd_endpoint }}/service/ready 2>/dev/null && echo "ready" || echo "unreachable"
+          ansible.builtin.uri:
+            url: "{{ openchami_smd_endpoint }}/service/ready"
+            method: GET
+            validate_certs: false
+            status_code: 200
           register: pre_smd_api_check
           changed_when: false
           retries: "{{ api_readiness_retries }}"
           delay: "{{ api_readiness_delay }}"
-          until: pre_smd_api_check.stdout | trim == 'ready'
+          until: pre_smd_api_check.status == 200
           delegate_to: oim
           delegate_facts: true
           connection: ssh
 
         # ── Verify BSS API is reachable (MANDATORY with retries) ────────
         - name: Wait for BSS API to become reachable
-          ansible.builtin.shell: |
-            curl -sf -o /dev/null {{ openchami_bss_endpoint }}/service/status 2>/dev/null && echo "ready" || echo "unreachable"
+          ansible.builtin.uri:
+            url: "{{ openchami_bss_endpoint }}/service/status"
+            method: GET
+            validate_certs: false
+            status_code: 200
           register: pre_bss_api_check
           changed_when: false
           retries: "{{ api_readiness_retries }}"
           delay: "{{ api_readiness_delay }}"
-          until: pre_bss_api_check.stdout | trim == 'ready'
+          until: pre_bss_api_check.status == 200
           delegate_to: oim
           delegate_facts: true
           connection: ssh
@@ -334,7 +340,10 @@
               - "PostgreSQL: connected (db={{ postgres_db_name }}, user={{ postgres_db_user }})"
               - "SMD API: reachable at {{ openchami_smd_endpoint }}"
               - "BSS API: reachable at {{ openchami_bss_endpoint }}"
-              - "S3/MinIO: {{ 'accessible' if (pre_s3cfg_stat.stat.exists | default(false) and 's3_unreachable' not in pre_s3_check.stdout | default('s3_unreachable')) else 'not configured (non-fatal)' }}"
+              - >-
+                S3/MinIO: {{ 'accessible' if (pre_s3cfg_stat.stat.exists | default(false)
+                and 's3_unreachable' not in pre_s3_check.stdout | default('s3_unreachable'))
+                else 'not configured (non-fatal)' }}
               - "Node count: {{ pre_upgrade_node_count }}{{ ' (prepare_oim-only)' if (pre_upgrade_node_count | int) == 0 else '' }}"
               - "Version: {{ current_openchami_version | default('not recorded') }}"
               - "════════════════════════════════════════════"

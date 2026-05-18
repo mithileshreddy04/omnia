@@ -264,8 +264,8 @@ upgrade_messages:
       Please resolve issues before retrying upgrade:
       - Check container status: podman ps -a
       - Check container logs: podman logs <container_name>
-      - Get SMD IP/port: podman inspect -f '{{"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"}}' smd
-      - Get SMD port: podman inspect -f '{{"{{range $k, $v := .NetworkSettings.Ports}}{{$k}}{{end}}"}}' smd
+      - Get SMD IP/port: podman inspect -f '{{ "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" }}' smd
+      - Get SMD port: podman inspect -f '{{ "{{range $k, $v := .NetworkSettings.Ports}}{{$k}}{{end}}" }}' smd
       - Check systemd status: systemctl status openchami.target
     container_upgrade_diagnosis: |
       Check container logs for errors:
@@ -283,4 +283,4 @@ upgrade_messages:
       - S3 buckets: s3cmd -c /opt/omnia/openchami/s3/.s3cfg ls
       - SMD API: curl -s http://<smd_ip>:<smd_port>/hsm/v2/State/Components
       - BSS boot params: curl -s http://<bss_ip>:<bss_port>/boot/v1/bootparameters
-      - Get container IPs: podman inspect -f '{{"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"}}' <container>
+      - Get container IPs: podman inspect -f '{{ "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}" }}' <container>

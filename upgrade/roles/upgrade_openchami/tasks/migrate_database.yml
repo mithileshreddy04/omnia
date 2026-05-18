@@ -165,26 +165,32 @@
     # ── Verify SMD API is reachable (MANDATORY with retries) ────────────
     # After container restart and DB migration, SMD must be responding.
     - name: Wait for SMD API to become reachable post-migration
-      ansible.builtin.shell: |
-        curl -sf -o /dev/null {{ openchami_smd_endpoint }}/service/ready 2>/dev/null && echo "ready" || echo "unreachable"
+      ansible.builtin.uri:
+        url: "{{ openchami_smd_endpoint }}/service/ready"
+        method: GET
+        validate_certs: false
+        status_code: 200
       register: smd_api_health
       changed_when: false
       retries: "{{ api_readiness_retries }}"
       delay: "{{ api_readiness_delay }}"
-      until: smd_api_health.stdout | trim == 'ready'
+      until: smd_api_health.status == 200
       delegate_to: oim
       delegate_facts: true
       connection: ssh
 
     # ── Verify BSS API is reachable (MANDATORY with retries) ──────────
     - name: Wait for BSS API to become reachable post-migration
-      ansible.builtin.shell: |
-        curl -sf -o /dev/null {{ openchami_bss_endpoint }}/service/status 2>/dev/null && echo "ready" || echo "unreachable"
+      ansible.builtin.uri:
+        url: "{{ openchami_bss_endpoint }}/service/status"
+        method: GET
+        validate_certs: false
+        status_code: 200
       register: bss_api_health
       changed_when: false
       retries: "{{ api_readiness_retries }}"
       delay: "{{ api_readiness_delay }}"
-      until: bss_api_health.stdout | trim == 'ready'
+      until: bss_api_health.status == 200
       delegate_to: oim
       delegate_facts: true
       connection: ssh
@@ -197,9 +203,18 @@
           - "  DATABASE MIGRATION COMPLETED"
           - "════════════════════════════════════════════"
           - "PostgreSQL: ready"
-          - "HMS schema: {{ 'initialized (components table found)' if smd_schema_initialized | default(false) | bool else 'tables not yet populated' }}"
-          - "SMD startup: {{ 'no migration failures detected' if smd_logs.stdout is not defined or ('FATAL' not in smd_logs.stdout | default('') and 'migration failed' not in (smd_logs.stdout | default('') | lower)) else 'WARNING — check podman logs smd' }}"
-          - "Node count — Pre: {{ pre_upgrade_node_count | default('0') | trim }}, Post: {{ post_migration_node_count.stdout | default('0') | trim }}{{ ' (prepare_oim-only)' if (pre_upgrade_node_count | default('0') | trim | int) == 0 and (post_migration_node_count.stdout | default('0') | trim | int) == 0 else '' }}"
+          - >-
+            HMS schema: {{ 'initialized (components table found)' if smd_schema_initialized
+            | default(false) | bool else 'tables not yet populated' }}
+          - >-
+            SMD startup: {{ 'no migration failures detected' if smd_logs.stdout is not defined
+            or ('FATAL' not in smd_logs.stdout | default('') and 'migration failed' not in
+            (smd_logs.stdout | default('') | lower)) else 'WARNING — check podman logs smd' }}
+          - >-
+            Node count — Pre: {{ pre_upgrade_node_count | default('0') | trim }},
+            Post: {{ post_migration_node_count.stdout | default('0') | trim }}{{
+            ' (prepare_oim-only)' if (pre_upgrade_node_count | default('0') | trim | int) == 0
+            and (post_migration_node_count.stdout | default('0') | trim | int) == 0 else '' }}
           - "SMD API: reachable at {{ openchami_smd_endpoint }}"
           - "BSS API: reachable at {{ openchami_bss_endpoint }}"
 
