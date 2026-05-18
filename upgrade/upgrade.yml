@@ -264,30 +264,23 @@
       ansible.builtin.set_fact:
         manifest: "{{ raw_manifest.content | b64decode | from_yaml }}"
 
-    - name: Clean up corrupted component_status values (reset all to 'completed')
-      ansible.builtin.set_fact:
-        cleaned_component_status: >-
-          {{ manifest.component_status
-             | dict2items
-             | map('combine', {'value': 'completed'})
-             | items2dict }}
-
-    - name: Determine upgrade_status based on component_status
+    - name: Determine upgrade_status based on actual component_status
       ansible.builtin.set_fact:
         new_status: >-
-          {{ 'completed'
-             if (cleaned_component_status.values() | unique | list == ['completed'])
-             else 'partial' }}
+          {% set statuses = manifest.component_status.values() | list -%}
+          {% if statuses | reject('equalto', 'completed') | list | length == 0 -%}
+          completed
+          {%- elif 'failed' in statuses -%}
+          failed
+          {%- else -%}
+          partial
+          {%- endif %}
 
-    - name: Write upgrade_manifest.yml with cleaned component_status and updated upgrade_status
+    - name: Write upgrade_manifest.yml with updated upgrade_status
       ansible.builtin.copy:
-        content: "{{ manifest | combine(manifest_updates) | to_nice_yaml }}"
+        content: "{{ manifest | combine({'upgrade_status': new_status | trim}) | to_nice_yaml }}"
         dest: "{{ manifest_path }}"
         mode: '0644'
-      vars:
-        manifest_updates:
-          component_status: "{{ cleaned_component_status }}"
-          upgrade_status: "{{ new_status }}"
 
     # NOTE: oim_metadata.yml is intentionally NOT modified by upgrade or
     # rollback flows. It is read-only and reflects the cluster's installed
@@ -308,10 +301,10 @@
           - "Source: {{ manifest.source_version | default('N/A') }} → Target: {{ manifest.target_version | default('N/A') }}"
           - ""
           - "Component Status:"
-          - "  oim:            {{ cleaned_component_status.oim | default('pending') }}"
-          - "  local_repo:     {{ cleaned_component_status.local_repo | default('pending') }}"
-          - "  build_image:    {{ cleaned_component_status.build_image | default('pending') }}"
-          - "  k8s:            {{ cleaned_component_status.k8s | default('pending') }}"
-          - "  telemetry:      {{ cleaned_component_status.telemetry | default('pending') }}"
-          - "  cloud_init_bss: {{ cleaned_component_status.cloud_init_bss | default('pending') }}"
-          - "  slurm:          {{ cleaned_component_status.slurm | default('pending') }}"
+          - "  oim:            {{ manifest.component_status.oim | default('pending') }}"
+          - "  local_repo:     {{ manifest.component_status.local_repo | default('pending') }}"
+          - "  build_image:    {{ manifest.component_status.build_image | default('pending') }}"
+          - "  k8s:            {{ manifest.component_status.k8s | default('pending') }}"
+          - "  telemetry:      {{ manifest.component_status.telemetry | default('pending') }}"
+          - "  cloud_init_bss: {{ manifest.component_status.cloud_init_bss | default('pending') }}"
+          - "  slurm:          {{ manifest.component_status.slurm | default('pending') }}"

@@ -46,9 +46,6 @@
             minio: "{{ minio_release_tag }}"
         dest: "/opt/omnia/.data/version.yml"
         mode: "{{ file_permissions_644 }}"
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
       when:
         - not (openchami_upgrade_failed | default(false) | bool)
         - openchami_deployed | default(false) | bool

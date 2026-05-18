@@ -13,6 +13,26 @@
 # limitations under the License.
 ---
 
+# ============================================================================
+# pre_upgrade_health_check.yml — Pre-Upgrade Detection, Idempotency & Health
+# ============================================================================
+# Scenarios handled:
+#   A. OpenCHAMI not deployed → openchami_deployed=false, upgrade skipped
+#   B. Deployed, already at target versions → upgrade_needed=false, no-op rerun
+#   C. Deployed, upgrade needed → full health validation, then proceed
+#   D. Deployed, empty DB (prepare_oim-only) → health passes, node count=0
+#   E. Deployed, full cluster with nodes → health passes, node count recorded
+#
+# Design:
+#   - SMD/BSS API endpoints MUST be reachable (with retry/wait). Hard failure
+#     if unreachable after retries — these services must always be up.
+#   - Node count from DB is non-fatal (0 is valid for prepare_oim-only).
+#   - S3 check is non-fatal (may not be configured yet).
+#   - Idempotency check uses a robust single-command podman inspect that
+#     avoids fragile shell pipes. On rerun after success, upgrade_needed=false
+#     and no containers are touched.
+# ============================================================================
+
 # --- Detection: Check if OpenCHAMI was previously deployed ---
 
 - name: Check if podman is installed
@@ -72,14 +92,24 @@
 - name: Pre-upgrade checks
   when: openchami_deployed | default(false) | bool
   block:
-    # --- Idempotency: Check if upgrade is actually needed ---
+    # ── Idempotency: Check if upgrade is actually needed ──────────────
+    # Uses a single podman inspect command per container to get ImageName.
+    # Avoids the fragile two-command pipe pattern that could fail and
+    # incorrectly trigger a full upgrade cycle on a healthy system.
     - name: Check current OpenCHAMI container versions
       block:
         - name: Get current container image tags
           ansible.builtin.shell: |
             set -o pipefail
-            podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}' 2>/dev/null | \
-            podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' - 2>/dev/null || echo "not_found"
+            NAME=$(podman inspect --format '{% raw %}{{.ImageName}}{% endraw %}' {{ item.container }} 2>/dev/null || true)
+            if [ -z "$NAME" ] || [ "$NAME" = "" ] || [ "$NAME" = "<no value>" ]; then
+              # Fallback: resolve via image ID
+              IMG_ID=$(podman inspect --format '{% raw %}{{.Image}}{% endraw %}' {{ item.container }} 2>/dev/null || true)
+              if [ -n "$IMG_ID" ]; then
+                NAME=$(podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' "$IMG_ID" 2>/dev/null || true)
+              fi
+            fi
+            echo "${NAME:-not_found}"
           loop: "{{ openchami_containers }}"
           register: current_images
           changed_when: false
@@ -88,24 +118,37 @@
           delegate_facts: true
           connection: ssh
 
+        - name: Build current vs expected image comparison
+          ansible.builtin.set_fact:
+            current_image_list: >-
+              {{ current_images.results |
+                 selectattr('stdout', 'defined') |
+                 map(attribute='stdout') |
+                 map('trim') | list }}
+            expected_image_list: >-
+              {{ openchami_containers | map(attribute='expected_image') | list }}
+
         - name: Determine if upgrade is needed
           ansible.builtin.set_fact:
-            upgrade_needed: >-
-              {{
-                current_images.results |
-                selectattr('stdout', 'defined') |
-                map(attribute='stdout') | list !=
-                openchami_containers | map(attribute='expected_image') | list
-              }}
+            upgrade_needed: "{{ current_image_list != expected_image_list }}"
 
-        - name: Display upgrade status
+        - name: Display idempotency check result
           ansible.builtin.debug:
-            msg: "{{ upgrade_messages.idempotency.skip_message }}"
-          when: not (upgrade_needed | bool)
+            msg: >-
+              {{ upgrade_messages.idempotency.skip_message
+                 if not (upgrade_needed | bool)
+                 else upgrade_messages.idempotency.upgrade_needed }}
 
-        - name: Display containers requiring upgrade
+        - name: Display per-container version comparison
           ansible.builtin.debug:
-            msg: "{{ upgrade_messages.idempotency.upgrade_needed }}"
+            msg: >-
+              {{ item.container }}: current={{ current_image_list[idx] | default('unknown') }},
+              expected={{ item.expected_image }}
+              {{ '✓' if current_image_list[idx] | default('') == item.expected_image else '→ NEEDS UPDATE' }}
+          loop: "{{ openchami_containers }}"
+          loop_control:
+            index_var: idx
+            label: "{{ item.container }}"
           when: upgrade_needed | bool
 
       rescue:
@@ -121,7 +164,7 @@
     - name: Retrieve PostgreSQL credentials
       ansible.builtin.include_tasks: retrieve_postgres_credentials.yml
 
-    # --- Pre-upgrade health verification ---
+    # --- Pre-upgrade health verification (only when upgrade is needed) ---
     - name: Pre-upgrade health check
       when: upgrade_needed | default(true) | bool
       block:
@@ -130,18 +173,12 @@
           ansible.builtin.stat:
             path: "/opt/omnia/.data/version.yml"
           register: version_yml_stat
-          delegate_to: oim
-          delegate_facts: true
-          connection: ssh
 
         - name: Read current OpenCHAMI version from version.yml
           ansible.builtin.slurp:
             src: "/opt/omnia/.data/version.yml"
           register: version_yml_raw
           when: version_yml_stat.stat.exists | default(false)
-          delegate_to: oim
-          delegate_facts: true
-          connection: ssh
 
         - name: Parse version.yml and display current version
           ansible.builtin.set_fact:
@@ -155,18 +192,6 @@
             msg: "Current OpenCHAMI version: {{ current_openchami_version | default('not recorded') }}"
 
         # ── Verify no active provisioning jobs ────────────────────────
-        - name: Check for active provisioning jobs via BSS
-          ansible.builtin.shell: |
-            set -o pipefail
-            curl -s {{ openchami_bss_endpoint }}/bootparameters 2>/dev/null | \
-            grep -c '"kernel"' || echo "0"
-          register: bss_active_params
-          changed_when: false
-          failed_when: false
-          delegate_to: oim
-          delegate_facts: true
-          connection: ssh
-
         - name: Check for running discovery processes
           ansible.builtin.shell: |
             set -o pipefail
@@ -178,12 +203,6 @@
           delegate_facts: true
           connection: ssh
 
-        - name: Display provisioning status
-          ansible.builtin.debug:
-            msg:
-              - "BSS boot parameters configured: {{ bss_active_params.stdout | default('0') | trim }}"
-              - "Active provisioning processes: {{ 'none detected' if 'none' in active_provision_check.stdout | default('none') else 'WARNING: provisioning may be active' }}"
-
         - name: Warn if provisioning appears active
           ansible.builtin.debug:
             msg: |
@@ -193,7 +212,8 @@
             - active_provision_check.stdout is defined
             - "'none' not in active_provision_check.stdout"
 
-        - name: Verify all OpenCHAMI containers are running
+        # ── Verify critical containers are running ─────────────────────
+        - name: Verify all critical pre-upgrade containers are running
           ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
           loop: "{{ openchami_critical_containers }}"
           register: container_check
@@ -203,10 +223,11 @@
           delegate_facts: true
           connection: ssh
 
+        # ── Verify PostgreSQL connectivity ──────────────────────────────
         - name: Check postgres database connectivity
           ansible.builtin.shell: |
             set -o pipefail
-            podman exec postgres pg_isready
+            podman exec postgres pg_isready -U {{ postgres_db_user }} -d {{ postgres_db_name }}
           register: postgres_check
           changed_when: false
           failed_when: postgres_check.rc != 0
@@ -214,38 +235,48 @@
           delegate_facts: true
           connection: ssh
 
-        # ── Verify SMD API accessible ────────────────────────────────────
-        - name: Verify SMD API is accessible
+        # ── Verify SMD API is reachable (MANDATORY with retries) ────────
+        # SMD must be reachable in every scenario. If the container is
+        # running but the API is not responding after retries, something
+        # is fundamentally wrong and the upgrade must not proceed.
+        - name: Wait for SMD API to become reachable
           ansible.builtin.shell: |
-            set -o pipefail
-            curl -s {{ openchami_smd_endpoint }}/service/ready 2>/dev/null || echo "unreachable"
+            curl -sf -o /dev/null {{ openchami_smd_endpoint }}/service/ready 2>/dev/null && echo "ready" || echo "unreachable"
           register: pre_smd_api_check
           changed_when: false
-          failed_when: "'unreachable' in pre_smd_api_check.stdout"
+          retries: "{{ api_readiness_retries }}"
+          delay: "{{ api_readiness_delay }}"
+          until: pre_smd_api_check.stdout | trim == 'ready'
           delegate_to: oim
           delegate_facts: true
           connection: ssh
 
-        # ── Verify BSS API accessible ────────────────────────────────────
-        - name: Verify BSS API is accessible
+        # ── Verify BSS API is reachable (MANDATORY with retries) ────────
+        - name: Wait for BSS API to become reachable
           ansible.builtin.shell: |
-            set -o pipefail
-            curl -s {{ openchami_bss_endpoint }}/service/status 2>/dev/null || echo "unreachable"
+            curl -sf -o /dev/null {{ openchami_bss_endpoint }}/service/status 2>/dev/null && echo "ready" || echo "unreachable"
           register: pre_bss_api_check
           changed_when: false
-          failed_when: "'unreachable' in pre_bss_api_check.stdout"
+          retries: "{{ api_readiness_retries }}"
+          delay: "{{ api_readiness_delay }}"
+          until: pre_bss_api_check.stdout | trim == 'ready'
           delegate_to: oim
           delegate_facts: true
           connection: ssh
 
-        # ── Verify S3/MinIO accessible ───────────────────────────────────
+        - name: Display API reachability status
+          ansible.builtin.debug:
+            msg:
+              - "SMD API: reachable at {{ openchami_smd_endpoint }}"
+              - "BSS API: reachable at {{ openchami_bss_endpoint }}"
+
+        # ── Verify S3/MinIO accessible (non-fatal) ──────────────────────
+        # S3 may not be configured in prepare_oim-only setups (no
+        # build_image has run yet). This is informational only.
         - name: Check s3cmd configuration exists
           ansible.builtin.stat:
             path: "/opt/omnia/openchami/s3/.s3cfg"
           register: pre_s3cfg_stat
-          delegate_to: oim
-          delegate_facts: true
-          connection: ssh
 
         - name: Verify S3 is accessible
           ansible.builtin.shell: |
@@ -253,36 +284,60 @@
             s3cmd -c /opt/omnia/openchami/s3/.s3cfg ls 2>&1 || echo "s3_unreachable"
           register: pre_s3_check
           changed_when: false
-          failed_when: "'s3_unreachable' in pre_s3_check.stdout and 'ERROR' in pre_s3_check.stdout"
+          failed_when: false
           when: pre_s3cfg_stat.stat.exists | default(false)
           delegate_to: oim
           delegate_facts: true
           connection: ssh
 
-        - name: Display pre-flight API and S3 status
+        - name: Display S3 status
           ansible.builtin.debug:
-            msg:
-              - "SMD API: {{ 'accessible' if ('unreachable' not in pre_smd_api_check.stdout | default('unreachable')) else 'NOT accessible' }}"
-              - "BSS API: {{ 'accessible' if ('unreachable' not in pre_bss_api_check.stdout | default('unreachable')) else 'NOT accessible' }}"
-              - "S3/MinIO: {{ 'accessible' if (pre_s3cfg_stat.stat.exists | default(false) and 's3_unreachable' not in pre_s3_check.stdout | default('')) else 'skipped or not accessible' }}"
+            msg: >-
+              S3/MinIO: {{ 'accessible' if (pre_s3cfg_stat.stat.exists | default(false) and
+              's3_unreachable' not in pre_s3_check.stdout | default('s3_unreachable'))
+              else 'not configured or not accessible (non-fatal — expected for prepare_oim-only)' }}
 
+        # ── Capture baseline node count (non-fatal) ────────────────────
+        # Query the 'components' table (public schema). The table may be
+        # empty (prepare_oim-only) or may not exist if SMD just started.
+        # A count of 0 is valid and does not block the upgrade.
         - name: Capture baseline node count from database
           ansible.builtin.shell: |
             set -o pipefail
-            podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+            podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c "SELECT COUNT(*) FROM components;" 2>/dev/null || echo "0"
           register: pre_upgrade_node_count_raw
           changed_when: false
+          failed_when: false
           delegate_to: oim
           delegate_facts: true
           connection: ssh
 
         - name: Set pre_upgrade_node_count fact for use across task files
           ansible.builtin.set_fact:
-            pre_upgrade_node_count: "{{ pre_upgrade_node_count_raw.stdout | default('0') }}"
+            pre_upgrade_node_count: "{{ pre_upgrade_node_count_raw.stdout | default('0') | trim }}"
 
-        - name: Display pre-upgrade health check success
+        - name: Display baseline node count
           ansible.builtin.debug:
-            msg: "{{ upgrade_messages.health_check.pre_check_success }}"
+            msg: >-
+              Pre-upgrade baseline node count: {{ pre_upgrade_node_count }}.
+              {{ '(empty database — prepare_oim-only scenario, no nodes discovered yet)'
+                 if (pre_upgrade_node_count | int) == 0 else '' }}
+
+        # ── Pre-upgrade summary ──────────────────────────────────────────
+        - name: Display pre-upgrade health check summary
+          ansible.builtin.debug:
+            msg:
+              - "════════════════════════════════════════════"
+              - "  PRE-UPGRADE HEALTH CHECK PASSED"
+              - "════════════════════════════════════════════"
+              - "Containers: all {{ openchami_critical_containers | length }} critical containers running"
+              - "PostgreSQL: connected (db={{ postgres_db_name }}, user={{ postgres_db_user }})"
+              - "SMD API: reachable at {{ openchami_smd_endpoint }}"
+              - "BSS API: reachable at {{ openchami_bss_endpoint }}"
+              - "S3/MinIO: {{ 'accessible' if (pre_s3cfg_stat.stat.exists | default(false) and 's3_unreachable' not in pre_s3_check.stdout | default('s3_unreachable')) else 'not configured (non-fatal)' }}"
+              - "Node count: {{ pre_upgrade_node_count }}{{ ' (prepare_oim-only)' if (pre_upgrade_node_count | int) == 0 else '' }}"
+              - "Version: {{ current_openchami_version | default('not recorded') }}"
+              - "════════════════════════════════════════════"
 
       rescue:
         - name: Pre-upgrade health check failed

@@ -13,30 +13,55 @@
 # limitations under the License.
 ---
 
+# ============================================================================
+# post_upgrade_health_check.yml — Post-Upgrade Validation
+# ============================================================================
+# Scenarios handled:
+#   A. Upgrade just completed → containers restarted, need time to initialize
+#   B. Rerun after successful upgrade → containers already healthy, fast pass
+#   C. prepare_oim-only → node count=0, S3 may not exist, BSS params empty
+#   D. Full cluster → node count preserved, S3 buckets present, BSS configured
+#
+# Design:
+#   - ALL post-upgrade containers MUST be running (hard failure if missing).
+#   - SMD/BSS API endpoints MUST be reachable with retry/wait.
+#   - Legacy coresmd container MUST NOT be running (hard failure).
+#   - Node count, S3, BSS boot params: non-fatal (informational).
+#   - Systemd dependency tree: checked with hard failure for core services.
+# ============================================================================
+
 - name: Post-upgrade health check
   block:
     # ── Retrieve PostgreSQL credentials if not already set ─────────────
     - name: Retrieve PostgreSQL credentials
       ansible.builtin.include_tasks: retrieve_postgres_credentials.yml
 
-    - name: Wait for service initialization
+    - name: Wait for service initialization after container restart
       ansible.builtin.pause:
-        seconds: 60
+        seconds: 30
 
+    # ── Verify ALL post-upgrade containers are running ─────────────────
+    # After upgrade, every container in the post-upgrade list must be up.
+    # We retry to allow time for systemd to start quadlet-managed containers.
     - name: Verify all post-upgrade OpenCHAMI containers are running
-      ansible.builtin.command: podman ps --filter "name={{ item }}" --format '{% raw %}{{.Names}}{% endraw %}'
+      ansible.builtin.shell: |
+        set -o pipefail
+        podman ps --filter "name=^{{ item }}$" --format '{% raw %}{{.Names}}{% endraw %}' | grep -w "{{ item }}" || echo ""
       loop: "{{ openchami_post_upgrade_critical_containers }}"
       register: container_check
       changed_when: false
-      failed_when: container_check.stdout | length == 0
+      retries: 6
+      delay: 10
+      until: container_check.stdout | trim | length > 0
       delegate_to: oim
       delegate_facts: true
       connection: ssh
 
+    # ── Verify PostgreSQL connectivity ──────────────────────────────────
     - name: Check postgres database connectivity
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres pg_isready
+        podman exec postgres pg_isready -U {{ postgres_db_user }} -d {{ postgres_db_name }}
       register: postgres_check
       changed_when: false
       failed_when: postgres_check.rc != 0
@@ -44,43 +69,76 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Verify container image versions
+    # ── Verify container image versions ────────────────────────────────
+    - name: Verify container image versions match targets
       ansible.builtin.shell: |
         set -o pipefail
-        if ! podman ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^{{ item.container }}$"; then
-          echo "Container {{ item.container }} does not exist"
-          exit 0
+        NAME=$(podman inspect --format '{% raw %}{{.ImageName}}{% endraw %}' {{ item.container }} 2>/dev/null || true)
+        if [ -z "$NAME" ] || [ "$NAME" = "" ] || [ "$NAME" = "<no value>" ]; then
+          IMG_ID=$(podman inspect --format '{% raw %}{{.Image}}{% endraw %}' {{ item.container }} 2>/dev/null || true)
+          if [ -n "$IMG_ID" ]; then
+            NAME=$(podman inspect --format '{% raw %}{{index .RepoTags 0}}{% endraw %}' "$IMG_ID" 2>/dev/null || true)
+          fi
         fi
-        IMAGE_ID=$(podman inspect {{ item.container }} --format '{% raw %}{{.Image}}{% endraw %}')
-        podman inspect $IMAGE_ID --format '{% raw %}{{index .RepoTags 0}}{% endraw %}'
+        echo "${NAME:-not_found}"
       loop: "{{ openchami_containers }}"
       register: version_check
       changed_when: false
       failed_when: >-
-        version_check.stdout != "" and
-        version_check.stdout != ("Container " ~ item.container ~ " does not exist") and
-        version_check.stdout != item.expected_image
+        version_check.stdout | trim != item.expected_image and
+        version_check.stdout | trim != 'not_found'
       delegate_to: oim
       delegate_facts: true
       connection: ssh
 
+    # ── Verify legacy coresmd is gone ──────────────────────────────────
     - name: Verify legacy coresmd container is no longer running
       ansible.builtin.shell: |
         set -o pipefail
         podman ps --filter "name=^coresmd$" --format '{% raw %}{{.Names}}{% endraw %}' | grep -w "^coresmd$" || true
       register: legacy_coresmd_check
       changed_when: false
-      failed_when: legacy_coresmd_check.stdout | length > 0
+      failed_when: legacy_coresmd_check.stdout | trim | length > 0
       delegate_to: oim
       delegate_facts: true
       connection: ssh
 
-    - name: Verify post-upgrade node count matches baseline
+    # ── Verify SMD API is reachable (MANDATORY with retries) ───────────
+    # After container restart, SMD may need time to initialize and run
+    # database migrations. We wait up to 90 seconds.
+    - name: Wait for SMD API to become reachable after upgrade
+      ansible.builtin.shell: |
+        curl -sf -o /dev/null {{ openchami_smd_endpoint }}/service/ready 2>/dev/null && echo "ready" || echo "unreachable"
+      register: post_smd_api_check
+      changed_when: false
+      retries: "{{ api_readiness_retries }}"
+      delay: "{{ api_readiness_delay }}"
+      until: post_smd_api_check.stdout | trim == 'ready'
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Verify BSS API is reachable (MANDATORY with retries) ───────────
+    - name: Wait for BSS API to become reachable after upgrade
+      ansible.builtin.shell: |
+        curl -sf -o /dev/null {{ openchami_bss_endpoint }}/service/status 2>/dev/null && echo "ready" || echo "unreachable"
+      register: post_bss_api_check
+      changed_when: false
+      retries: "{{ api_readiness_retries }}"
+      delay: "{{ api_readiness_delay }}"
+      until: post_bss_api_check.stdout | trim == 'ready'
+      delegate_to: oim
+      delegate_facts: true
+      connection: ssh
+
+    # ── Verify node count (non-fatal) ──────────────────────────────────
+    - name: Verify post-upgrade node count
       ansible.builtin.shell: |
         set -o pipefail
-        podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c "SELECT COUNT(*) FROM smd.xname;" 2>/dev/null || echo "0"
+        podman exec postgres psql -U {{ postgres_db_user }} -d {{ postgres_db_name }} -t -c "SELECT COUNT(*) FROM components;" 2>/dev/null || echo "0"
       register: post_upgrade_node_count
       changed_when: false
+      failed_when: false
       delegate_to: oim
       delegate_facts: true
       connection: ssh
@@ -88,13 +146,24 @@
     - name: Compare node counts
       ansible.builtin.debug:
         msg: >-
-          Node count - Pre-upgrade: {{ pre_upgrade_node_count | default('unknown') | trim }},
-          Post-upgrade: {{ post_upgrade_node_count.stdout | trim }}
-      when: pre_upgrade_node_count is defined
+          Node count — Pre-upgrade: {{ pre_upgrade_node_count | default('0') | trim }},
+          Post-upgrade: {{ post_upgrade_node_count.stdout | default('0') | trim }}.
+          {{ '(both zero — prepare_oim-only scenario, no nodes discovered yet)'
+             if (pre_upgrade_node_count | default('0') | trim | int) == 0 and (post_upgrade_node_count.stdout | default('0') | trim | int) == 0
+             else '' }}
+
+    - name: Warn if node count decreased
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: Node count decreased from {{ pre_upgrade_node_count | default('0') | trim }}
+          to {{ post_upgrade_node_count.stdout | default('0') | trim }}.
+          Review SMD logs: podman logs smd
+      when:
+        - pre_upgrade_node_count is defined
+        - (pre_upgrade_node_count | default('0') | trim | int) > 0
+        - (post_upgrade_node_count.stdout | default('0') | trim | int) < (pre_upgrade_node_count | default('0') | trim | int)
 
     # ── Systemd dependency tree validation ─────────────────────────────
-    # Verify openchami.target has all expected services wired up,
-    # including the new coresmd-coredhcp and coresmd-coredns services.
     - name: Verify openchami.target dependency tree
       ansible.builtin.shell: |
         set -o pipefail
@@ -106,18 +175,17 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Validate expected services in openchami.target
+    - name: Validate core services in openchami.target
       ansible.builtin.assert:
         that:
-          - "'coresmd-coredhcp.service' in openchami_deps.stdout"
-          - "'coresmd-coredns.service' in openchami_deps.stdout"
           - "'smd.service' in openchami_deps.stdout or 'smd' in openchami_deps.stdout"
           - "'bss.service' in openchami_deps.stdout or 'bss' in openchami_deps.stdout"
+          - "'coresmd-coredhcp.service' in openchami_deps.stdout"
+          - "'coresmd-coredns.service' in openchami_deps.stdout"
         fail_msg: >-
-          openchami.target is missing expected services.
+          openchami.target is missing required services.
           Dependencies found: {{ openchami_deps.stdout | default('none') }}
-          Expected: coresmd-coredhcp.service, coresmd-coredns.service, smd, bss
-        success_msg: "openchami.target dependency tree verified."
+        success_msg: "openchami.target dependency tree verified — all services present."
       when: openchami_deps.rc == 0
 
     - name: Verify legacy coresmd.service is NOT in dependency tree
@@ -125,14 +193,12 @@
         that:
           - "'coresmd.service' not in openchami_deps.stdout"
         fail_msg: >-
-          Legacy coresmd.service still found in openchami.target dependencies.
-          This should have been replaced by coresmd-coredhcp + coresmd-coredns.
+          Legacy coresmd.service still found in openchami.target.
+          Run: systemctl disable coresmd.service && systemctl daemon-reload
         success_msg: "Legacy coresmd.service confirmed absent from target."
       when: openchami_deps.rc == 0
 
-    # ── ochami CLI validation ──────────────────────────────────────────
-    # Verify the ochami CLI is installed and can authenticate to the
-    # local OpenCHAMI instance.
+    # ── ochami CLI validation (non-fatal) ──────────────────────────────
     - name: Check ochami CLI is installed
       ansible.builtin.command: ochami version
       register: ochami_version_check
@@ -141,11 +207,6 @@
       delegate_to: oim
       delegate_facts: true
       connection: ssh
-
-    - name: Display ochami CLI version
-      ansible.builtin.debug:
-        msg: "ochami CLI: {{ ochami_version_check.stdout | default('not installed') | trim }}"
-      when: ochami_version_check.rc | default(1) == 0
 
     - name: Verify ochami can list SMD components
       ansible.builtin.shell: |
@@ -159,22 +220,11 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Display ochami SMD component status
-      ansible.builtin.debug:
-        msg: >-
-          ochami SMD component check:
-          {{ 'responding' if ('ochami_unavailable' not in ochami_smd_check.stdout | default('ochami_unavailable'))
-             else 'not yet available (non-critical — may need token refresh)' }}
-
-    # ── S3/MinIO bucket validation ─────────────────────────────────────
-    # Verify S3 backend is accessible and required buckets exist.
+    # ── S3/MinIO bucket validation (non-fatal) ─────────────────────────
     - name: Check s3cmd configuration exists
       ansible.builtin.stat:
         path: "/opt/omnia/openchami/s3/.s3cfg"
       register: s3cfg_stat
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
 
     - name: Verify S3 buckets with s3cmd
       ansible.builtin.shell: |
@@ -188,20 +238,7 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Validate required S3 buckets present
-      ansible.builtin.debug:
-        msg: >-
-          S3 bucket check:
-          {% if s3cfg_stat.stat.exists | default(false) %}
-            Buckets found: {{ s3_bucket_list.stdout | default('none') | trim }}
-            {{ 'efi bucket: present' if ('efi' in s3_bucket_list.stdout | default('')) else 'efi bucket: MISSING' }}
-            {{ 'boot-images bucket: present' if ('boot-images' in s3_bucket_list.stdout | default('')) else 'boot-images bucket: MISSING' }}
-          {% else %}
-            s3cfg not found — S3 validation skipped (non-critical for container upgrade)
-          {% endif %}
-
-    # ── BSS boot parameter validation ──────────────────────────────────
-    # Verify BSS has valid boot parameters configured.
+    # ── BSS boot parameter validation (non-fatal) ─────────────────────
     - name: Check BSS boot parameters via API
       ansible.builtin.shell: |
         set -o pipefail
@@ -213,30 +250,24 @@
       delegate_facts: true
       connection: ssh
 
-    - name: Display BSS boot parameter status
-      ansible.builtin.debug:
-        msg: >-
-          BSS boot parameters:
-          {{ 'configured' if ('bss_unavailable' not in bss_bootparams.stdout | default('bss_unavailable')
-                              and bss_bootparams.stdout | default('') | trim | length > 2)
-             else 'not yet available or empty (non-critical — may need initialization)' }}
-
     # ── Comprehensive health summary ───────────────────────────────────
     - name: Display post-upgrade health check summary
       ansible.builtin.debug:
         msg:
           - "════════════════════════════════════════════"
-          - "  POST-UPGRADE HEALTH CHECK SUMMARY"
+          - "  POST-UPGRADE HEALTH CHECK PASSED"
           - "════════════════════════════════════════════"
-          - "Containers: all {{ openchami_post_upgrade_critical_containers | length }} critical containers running"
-          - "PostgreSQL: connected"
-          - "Image versions: verified"
+          - "Containers: all {{ openchami_post_upgrade_critical_containers | length }} post-upgrade containers running"
+          - "PostgreSQL: connected (db={{ postgres_db_name }}, user={{ postgres_db_user }})"
+          - "Image versions: verified against target"
           - "Legacy coresmd: removed"
-          - "Node count — Pre: {{ pre_upgrade_node_count | default('N/A') | trim }}, Post: {{ post_upgrade_node_count.stdout | trim }}"
+          - "SMD API: reachable at {{ openchami_smd_endpoint }}"
+          - "BSS API: reachable at {{ openchami_bss_endpoint }}"
+          - "Node count — Pre: {{ pre_upgrade_node_count | default('0') | trim }}, Post: {{ post_upgrade_node_count.stdout | default('0') | trim }}{{ ' (prepare_oim-only)' if (pre_upgrade_node_count | default('0') | trim | int) == 0 and (post_upgrade_node_count.stdout | default('0') | trim | int) == 0 else '' }}"
           - "Systemd deps: {{ 'verified' if openchami_deps.rc | default(1) == 0 else 'check skipped' }}"
-          - "ochami CLI: {{ 'v' ~ ochami_version_check.stdout | default('unknown') | trim if ochami_version_check.rc | default(1) == 0 else 'not verified' }}"
-          - "S3 buckets: {{ 'verified' if s3cfg_stat.stat.exists | default(false) else 'skipped' }}"
-          - "BSS boot params: {{ 'checked' if 'bss_unavailable' not in bss_bootparams.stdout | default('bss_unavailable') else 'initializing' }}"
+          - "ochami CLI: {{ 'v' ~ ochami_version_check.stdout | default('unknown') | trim if ochami_version_check.rc | default(1) == 0 else 'not installed' }}"
+          - "S3 buckets: {{ 'verified' if s3cfg_stat.stat.exists | default(false) else 'not configured (non-fatal)' }}"
+          - "BSS boot params: {{ 'configured' if ('bss_unavailable' not in bss_bootparams.stdout | default('bss_unavailable') and bss_bootparams.stdout | default('') | trim | length > 2) else 'empty (non-fatal — may need initialization)' }}"
           - "════════════════════════════════════════════"
 
     - name: Display post-upgrade health check success

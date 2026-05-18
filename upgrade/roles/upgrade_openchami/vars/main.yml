@@ -222,6 +222,11 @@ max_retries: 10
 max_delay: 10
 wait_time: 30
 
+# API readiness retry settings (SMD/BSS must be reachable)
+api_readiness_retries: 18
+api_readiness_delay: 5
+# Total wait: 18 × 5s = 90 seconds max for API endpoints to respond
+
 # Upgrade messages
 upgrade_messages:
   deployment:

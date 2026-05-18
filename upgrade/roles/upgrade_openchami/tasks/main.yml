@@ -32,6 +32,12 @@
         - name: Upgrade OpenCHAMI containers
           ansible.builtin.include_tasks: upgrade_openchami_containers.yml
 
+        # Container IPs/ports may change after stop/remove/start cycle.
+        # Re-discover endpoints so migrate_database and post_upgrade checks
+        # use the correct addresses.
+        - name: Re-resolve SMD/BSS endpoints after container upgrade
+          ansible.builtin.include_tasks: resolve_admin_ip.yml
+
         - name: Post-upgrade database migration and integrity check
           ansible.builtin.include_tasks: migrate_database.yml
 
