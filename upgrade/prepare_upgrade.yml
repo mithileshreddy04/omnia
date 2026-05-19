@@ -35,7 +35,6 @@
   connection: local
   gather_facts: true
   vars:
-    input_project_dir: "/opt/omnia/input/project_default"
     oim_metadata_path: "/opt/omnia/.data/oim_metadata.yml"
   roles:
     - role: ../utils/roles/include_input_dir
@@ -45,8 +44,6 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    input_project_dir: "/opt/omnia/input/project_default"
   tasks:
     - name: Read provision_config.yml to get pxe_mapping_file_path
       ansible.builtin.slurp:
@@ -71,6 +68,11 @@
           - ""
           - "All input files have been successfully migrated to:"
           - "    {{ input_project_dir }}"
+          - ""
+          - "  WARNING: If you make manual changes to the input files and"
+          - "           re-run this playbook, your changes will be OVERWRITTEN."
+          - "           This playbook re-transforms inputs from the 2.1 backup."
+          - "           Make all manual changes AFTER the final run of this playbook."
           - ""
           - "------------------------------------------------------------------------"
           - "SECTION 1: AUTOMATICALLY MIGRATED  (no action needed)"
@@ -107,10 +109,12 @@
           - "    1.  Restructured to: sources, bridges, sinks architecture"
           - "    2.  telemetry_sources.dcgm           (GPU metrics)"
           - "    3.  telemetry_sources.powerscale     (storage metrics)"
-          - "    4.  telemetry_bridges                (vector_ldms, vector_ome)"
-          - "    5.  telemetry_sinks.victoria_logs    (centralized logging)"
-          - "    6.  additional_metric_remote_write_endpoints"
-          - "    7.  additional_log_write_endpoints"
+          - "    4.  telemetry_sources.ufm            (InfiniBand fabric metrics)"
+          - "    5.  telemetry_bridges                (vector_ldms, vector_ome)"
+          - "    6.  telemetry_sinks.victoria_logs    (centralized logging)"
+          - "    7.  additional_metric_remote_write_endpoints"
+          - "    8.  additional_log_write_endpoints"
+          - "    9.  ufm_configuration                 (UFM Prometheus settings)"
           - "    Note: All new features are DISABLED by default."
           - ""
           - "File 4: {{ pxe_mapping_filename }}"

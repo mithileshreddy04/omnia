@@ -412,9 +412,13 @@
 
     - name: Write upgrade_manifest.yml with cleaned component_status and updated upgrade_status
       ansible.builtin.copy:
-        content: "{{ manifest | combine({'upgrade_status': new_status | trim}) | to_nice_yaml }}"
+        content: "{{ manifest | combine(manifest_updates) | to_nice_yaml }}"
         dest: "{{ manifest_path }}"
         mode: '0644'
+      vars:
+        manifest_updates:
+          component_status: "{{ cleaned_component_status }}"
+          upgrade_status: "{{ new_status }}"
 
     # NOTE: oim_metadata.yml is intentionally NOT modified by upgrade or
     # rollback flows. It is read-only and reflects the cluster's installed

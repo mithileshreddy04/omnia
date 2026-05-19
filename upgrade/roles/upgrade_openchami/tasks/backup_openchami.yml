@@ -14,38 +14,30 @@
 ---
 
 # ============================================================================
-# backup_openchami.yml — Pre-Upgrade Backup for OpenCHAMI Components
+# backup_openchami.yml — Pre-Upgrade PostgreSQL Backup for OpenCHAMI
 # ============================================================================
-# Creates a point-in-time snapshot of all OpenCHAMI state BEFORE the
-# container upgrade begins. Used for rollback recovery if upgrade fails.
+# Dumps the PostgreSQL hmsds database BEFORE the container upgrade begins.
+# Used for rollback recovery if upgrade fails.
+#
+# NOTE: File-level backups (openchami_data/, quadlets/, openchami.target)
+# are handled by omnia.sh --upgrade (backup_openchami_data function) during
+# Phase 3 backup creation. This playbook only handles the PostgreSQL dump
+# which requires podman exec into the running postgres container.
 #
 # Execution context:
 #   This playbook runs INSIDE the omnia_core container where /opt/omnia
-#   is bind-mounted from the OIM shared path:
-#     Host: ${oim_shared_path}/omnia  →  Container: /opt/omnia
+#   is bind-mounted from the OIM shared path.
+#   DELEGATED tasks (podman) run on the OIM host via SSH.
 #
-#   The host-side shared path (oim_shared_path) is read from
-#   oim_metadata.yml. It may be a local dir or an NFS mount.
-#
-#   LOCAL file ops inside the container write to /opt/omnia/* which
-#   maps to ${oim_shared_path}/omnia/* on the host shared filesystem.
-#
-#   DELEGATED tasks (podman, systemd) run on the OIM host. When they
-#   need to write backup files, they must write to the HOST-SIDE shared
-#   path: ${oim_shared_path}/omnia/backups/... (NOT /opt/omnia/...)
-#   so the files land on the shared filesystem and are visible from
-#   both the OIM host and inside omnia_core.
-#
-# Backup structure:
+# Backup structure (this playbook only creates postgresql_backup):
 #   {{ openchami_backup_dir }}/openchami/
 #     postgresql_backup/openchami.sql   - pg_dump of hmsds database
-#     quadlets/                         - all .container quadlet unit files
-#     openchami_data/                   - full copy of /opt/omnia/openchami/
-#     openchami.target                  - systemd target unit
 #   {{ openchami_backup_dir }}/openchami_backup_manifest.yml
 #
-# Note: configs_vars.yaml is preserved inside openchami_data/ since it
-#       lives at /opt/omnia/openchami/configs_vars.yaml in the source tree.
+# Already created by omnia.sh --upgrade:
+#     openchami_data/                   - full copy of /opt/omnia/openchami/
+#     quadlets/                         - all .container quadlet unit files
+#     openchami.target                  - systemd target unit
 # ============================================================================
 
 - name: Pre-upgrade OpenCHAMI backup
@@ -88,30 +80,22 @@
           - "OIM host backup path:  {{ oim_host_backup_dir }}"
           - "Shared path base:      {{ oim_shared_path }}"
 
-    # ── Create backup directory tree on BOTH sides ────────────────────
-    # Local creation (inside container) ensures dirs exist for local ops
-    # like openchami_data cp and manifest writes.
-    # OIM host creation ensures dirs exist for delegated ops (podman cp,
-    # quadlet copy, openchami.target copy).
-    - name: Create backup directory structure (local — inside omnia_core)
+    # ── Create backup directory for PostgreSQL dump ─────────────────
+    # File-level backups (openchami_data/, quadlets/, openchami.target)
+    # are already performed by omnia.sh --upgrade (backup_openchami_data).
+    # This playbook only handles the PostgreSQL dump which requires
+    # podman exec into the postgres container.
+    - name: Create PostgreSQL backup directory (local — inside omnia_core)
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ openchami_backup_dir }}/openchami/postgresql_backup"
         state: directory
         mode: "{{ dir_permissions_755 }}"
-      loop:
-        - "{{ openchami_backup_dir }}/openchami/postgresql_backup"
-        - "{{ openchami_backup_dir }}/openchami/quadlets"
-        - "{{ openchami_backup_dir }}/openchami/openchami_data"
 
-    - name: Create backup directory structure (OIM host — shared path)
+    - name: Create PostgreSQL backup directory (OIM host — shared path)
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ oim_host_backup_dir }}/openchami/postgresql_backup"
         state: directory
         mode: "{{ dir_permissions_755 }}"
-      loop:
-        - "{{ oim_host_backup_dir }}/openchami/postgresql_backup"
-        - "{{ oim_host_backup_dir }}/openchami/quadlets"
-        - "{{ oim_host_backup_dir }}/openchami/openchami_data"
       delegate_to: oim
       delegate_facts: true
       connection: ssh
@@ -233,78 +217,29 @@
           ({{ pgdump_stat.stat.size | default(0) }} bytes,
           pg_dump rc={{ pgdump_result.rc | default('unknown') }})
 
-    # ── Backup quadlet .container files ────────────────────────────────
-    # Quadlet files live on the OIM host at /etc/containers/systemd/.
-    # Copy them directly to the host-side shared backup path so they
-    # appear inside omnia_core via the bind mount.
-    - name: Find all quadlet .container files on OIM
-      ansible.builtin.find:
-        paths: "/etc/containers/systemd"
-        patterns: "*.container"
-        file_type: file
-      register: quadlet_files_found
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
+    # ── NOTE: File-level backups handled by omnia.sh ───────────────────
+    # The following items are already backed up by omnia.sh --upgrade
+    # (backup_openchami_data function) during Phase 3 backup creation:
+    #   - /opt/omnia/openchami/ → openchami/openchami_data/
+    #   - /etc/containers/systemd/*.container → openchami/quadlets/
+    #   - /etc/systemd/system/openchami.target → openchami/openchami.target
+    #
+    # This playbook only handles the PostgreSQL dump which requires
+    # podman exec into the running postgres container.
 
-    - name: Copy quadlet files to shared backup path
-      ansible.builtin.copy:
-        src: "{{ item.path }}"
-        dest: "{{ oim_host_backup_dir }}/openchami/quadlets/{{ item.path | basename }}"
-        remote_src: true
-        mode: "{{ file_permissions_644 }}"
-      loop: "{{ quadlet_files_found.files | default([]) }}"
-      loop_control:
-        label: "{{ item.path | basename }}"
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
-
-    # ── Backup entire /opt/omnia/openchami/ directory ─────────────────
-    # This preserves configs_vars.yaml, workdir RPMs, s3 config, and all
-    # other OpenCHAMI state files. We use 'openchami_data/' instead of
-    # 'workdir/' to avoid path duplication (/opt/omnia/openchami/ itself
-    # contains a workdir/ subdirectory).
-    - name: Check if /opt/omnia/openchami/ exists
+    # ── Verify file-level backups exist (created by omnia.sh) ────────
+    - name: Verify openchami_data backup exists (created by omnia.sh)
       ansible.builtin.stat:
-        path: "/opt/omnia/openchami"
-      register: openchami_dir_stat
+        path: "{{ openchami_backup_dir }}/openchami/openchami_data"
+      register: openchami_data_dir_stat
 
-    - name: Backup entire /opt/omnia/openchami/ to openchami_data
-      ansible.builtin.shell: |
-        set -o pipefail
-        cp -a /opt/omnia/openchami/. "{{ openchami_backup_dir }}/openchami/openchami_data/" 2>&1
-      register: workdir_backup_result
-      changed_when: workdir_backup_result.rc == 0
-      failed_when: workdir_backup_result.rc != 0
-      when: openchami_dir_stat.stat.exists | default(false)
-
-    - name: Verify configs_vars.yaml is present in openchami_data backup
-      ansible.builtin.stat:
-        path: "{{ openchami_backup_dir }}/openchami/openchami_data/configs_vars.yaml"
-      register: config_vars_stat_backup
-
-    # ── Backup openchami.target unit ───────────────────────────────────
-    # openchami.target lives on OIM host at /etc/systemd/system/.
-    # Copy directly to the host-side shared backup path.
-    - name: Check if openchami.target exists on OIM
-      ansible.builtin.stat:
-        path: "/etc/systemd/system/openchami.target"
-      register: openchami_target_stat
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
-
-    - name: Copy openchami.target to shared backup path
-      ansible.builtin.copy:
-        src: "/etc/systemd/system/openchami.target"
-        dest: "{{ oim_host_backup_dir }}/openchami/openchami.target"
-        remote_src: true
-        mode: "{{ file_permissions_644 }}"
-      when: openchami_target_stat.stat.exists
-      delegate_to: oim
-      delegate_facts: true
-      connection: ssh
+    - name: Display warning if openchami_data backup is missing
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: openchami_data backup directory not found at
+          {{ openchami_backup_dir }}/openchami/openchami_data.
+          This should have been created by omnia.sh --upgrade.
+      when: not (openchami_data_dir_stat.stat.exists | default(false))
 
     # ── Create backup manifest with inventory ──────────────────────────
     - name: Create backup inventory manifest
@@ -324,31 +259,18 @@
             size_bytes: {{ pgdump_stat.stat.size | default(0) }}
             pre_upgrade_node_count: {{ pre_upgrade_node_count | default('0') | trim }}
 
-          quadlet_files_count: {{ quadlet_files_found.matched | default(0) }}
-          quadlet_files:
-          {% for f in quadlet_files_found.files | default([]) %}
-            - "{{ f.path | basename }}"
-          {% endfor %}
-
-          openchami_data:
-            source: "/opt/omnia/openchami"
-            backed_up: {{ openchami_dir_stat.stat.exists | default(false) }}
-            configs_vars_present: {{ config_vars_stat_backup.stat.exists | default(false) }}
-
-          openchami_target_backed_up: {{ openchami_target_stat.stat.exists | default(false) }}
+          # File-level backups created by omnia.sh --upgrade:
+          openchami_data_present: {{ openchami_data_dir_stat.stat.exists | default(false) }}
         dest: "{{ openchami_backup_dir }}/openchami_backup_manifest.yml"
         mode: "{{ file_permissions_644 }}"
 
     - name: Display backup completion summary
       ansible.builtin.debug:
         msg:
-          - "Pre-upgrade backup completed successfully."
+          - "Pre-upgrade PostgreSQL backup completed successfully."
           - "Backup location: {{ openchami_backup_dir }}/openchami/"
           - "PostgreSQL dump: {{ pgdump_stat.stat.size | default(0) }} bytes (db={{ postgres_db_name }}, user={{ postgres_db_user }})"
-          - "Quadlet files: {{ quadlet_files_found.matched | default(0) }}"
-          - "OpenCHAMI data (/opt/omnia/openchami/): {{ 'backed up' if openchami_dir_stat.stat.exists | default(false) else 'not found' }}"
-          - "configs_vars.yaml: {{ 'present in backup' if config_vars_stat_backup.stat.exists | default(false) else 'not found' }}"
-          - "openchami.target: {{ openchami_target_stat.stat.exists | default(false) }}"
+          - "File-level backups (openchami_data, quadlets, openchami.target): created by omnia.sh --upgrade"
 
   rescue:
     - name: Backup failed — abort upgrade to prevent data loss
