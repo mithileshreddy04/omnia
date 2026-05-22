@@ -293,7 +293,7 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  tags: [build_stream, gitlab]
+  tags: always
   tasks:
     - name: Read build_stream_config.yml to check enable_build_stream flag
       ansible.builtin.include_vars:
