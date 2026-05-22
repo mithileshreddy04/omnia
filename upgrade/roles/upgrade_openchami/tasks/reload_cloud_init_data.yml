@@ -77,9 +77,8 @@
     # ochami CLI requires an OAuth access token set as
     # <CLUSTER_NAME>_ACCESS_TOKEN env var. gen_access_token is a shell
     # function available on the OIM host via login shell.
-    # noqa: command-instead-of-shell  # shell required for login shell context
     - name: Generate ochami access token on OIM host
-      ansible.builtin.shell: bash -lc 'gen_access_token'
+      ansible.builtin.shell: bash -lc 'gen_access_token'  # noqa: command-instead-of-shell
       become: true
       register: reload_access_token_result
       changed_when: false
