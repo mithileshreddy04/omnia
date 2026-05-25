@@ -246,6 +246,8 @@
           - "v2.2-only quadlets removed: {{ rollback_v22_only_quadlets | join(', ') }}"
           - "openchami.target: restored from backup (references coresmd.service)"
           - "coredhcp.yaml: {{ 'restored from .pre-upgrade' if rollback_coredhcp_pre_stat.stat.exists | default(false) else 'no .pre-upgrade file found' }}"
-          - "Corefile: {{ 'restored from .pre-upgrade' if rollback_corefile_pre_stat.stat.exists | default(false) else 'no .pre-upgrade file (v2.1 may not have had it)' }}"
+          - >-
+            Corefile: {{ 'restored from .pre-upgrade' if rollback_corefile_pre_stat.stat.exists
+            | default(false) else 'no .pre-upgrade file (v2.1 may not have had it)' }}
           - "configs_vars.yaml: {{ 'restored' if rollback_configvars_stat.stat.exists | default(false) else 'not in backup' }}"
           - "RPMs restored: {{ rollback_rpm_files.files | default([]) | length }}"
