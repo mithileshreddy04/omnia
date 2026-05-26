@@ -404,8 +404,33 @@ def validate_command(cmd: list, playbook_path: str) -> bool:
     return True
 
 
-# validate_extra_vars function has been removed as we no longer use extra_vars
-# This eliminates a potential security vulnerability
+def sanitize_cmd_argument(
+    value: str,
+    pattern: str = r'^[a-zA-Z0-9_./-]+$',
+    max_length: int = 4096,
+) -> Optional[str]:
+    """Sanitize and validate a string value before using it in a command.
+
+    Validates the value against a regex pattern and length limit, then returns
+    a new string instance to break the taint chain from untrusted input sources
+    (e.g., json.load). This is a defence-in-depth measure on top of shell=False.
+
+    Args:
+        value: The untrusted string value to sanitize
+        pattern: Regex pattern the value must fully match
+        max_length: Maximum allowed character length
+
+    Returns:
+        A new sanitized string if valid, None if validation fails
+    """
+    if not isinstance(value, str):
+        return None
+    if len(value) == 0 or len(value) > max_length:
+        return None
+    if not re.match(pattern, value):
+        return None
+    # Create a new string instance to break the taint chain
+    return "".join(value)
 
 
 
@@ -508,6 +533,13 @@ def parse_request_file(request_path: Path) -> Optional[Dict[str, Any]]:
             if not config_path.startswith("/opt/omnia/") or ".." in config_path:
                 log_secure_info("error", "Invalid config_path", config_path[:8])
                 return None
+
+            # Validate test_suite if present (prevents command argument injection)
+            test_suite = request_data.get("test_suite", "")
+            if test_suite:
+                if not isinstance(test_suite, str) or not validate_stage_name(test_suite):
+                    log_secure_info("error", "Invalid test_suite format in request", str(test_suite)[:8])
+                    return None
         else:
             # Original ansible-playbook validation
             stage_name = str(request_data["stage_name"])
@@ -534,11 +566,15 @@ def parse_request_file(request_path: Path) -> Optional[Dict[str, Any]]:
         # Check for inventory_file_path
         if "inventory_file_path" in request_data:
             inventory_file_path = str(request_data["inventory_file_path"])
-            # Validate inventory file path
-            if not inventory_file_path.startswith("/") or ".." in inventory_file_path:
+            # Validate inventory file path — must be under /opt/omnia/ and match safe chars
+            if (
+                not inventory_file_path.startswith("/opt/omnia/")
+                or ".." in inventory_file_path
+                or not re.match(r'^[a-zA-Z0-9_/.\-]+$', inventory_file_path)
+            ):
                 log_secure_info(
                    "error",
-                    "Invalid inventory file path: possible directory traversal",
+                    "Invalid inventory file path: must be under /opt/omnia/ with safe characters",
                     job_id[:8]
                 )
                 return None
@@ -554,6 +590,12 @@ def parse_request_file(request_path: Path) -> Optional[Dict[str, Any]]:
             if not isinstance(request_data["extra_vars"], dict):
                 log_secure_info("error", "extra_vars must be a dictionary", job_id[:8])
                 return None
+
+            # Validate extra_vars keys are safe Ansible variable identifiers
+            for ev_key in request_data["extra_vars"]:
+                if not isinstance(ev_key, str) or not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', ev_key):
+                    log_secure_info("error", "Invalid extra_vars key format", job_id[:8])
+                    return None
 
             log_secure_info(
                 "info",
@@ -763,12 +805,16 @@ def execute_playbook(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Add inventory file path if present for build_image playbooks
     if "inventory_file_path" in request_data:
-        inventory_file_path = str(request_data["inventory_file_path"])
-        cmd.extend(["--inventory", inventory_file_path])
+        raw_inv_path = str(request_data["inventory_file_path"])
+        # Sanitize to break taint chain (already validated in parse_request_file)
+        clean_inv_path = sanitize_cmd_argument(raw_inv_path, r'^/opt/omnia/[a-zA-Z0-9_/.\-]+$')
+        if clean_inv_path is None:
+            raise ValueError("Inventory file path failed sanitization")
+        cmd.extend(["--inventory", clean_inv_path])
         log_secure_info(
             "info",
             "Using inventory file for build_image playbook",
-            inventory_file_path[:8]
+            clean_inv_path[:8]
         )
 
     # Build extra_vars: always inject job_id so playbooks can reference it
@@ -776,6 +822,11 @@ def execute_playbook(request_data: Dict[str, Any]) -> Dict[str, Any]:
     extra_vars = request_data.get("extra_vars", {})
     if not isinstance(extra_vars, dict):
         extra_vars = {}
+
+    # Re-validate extra_vars keys (defence in depth — already checked in parse_request_file)
+    for ev_key in list(extra_vars.keys()):
+        if not isinstance(ev_key, str) or not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', ev_key):
+            raise ValueError(f"Invalid extra_vars key rejected at cmd build: {ev_key!r}")
 
     # Always inject job_id into extra_vars (playbook requires it for artifact paths)
     extra_vars["job_id"] = job_id
@@ -1016,15 +1067,23 @@ def execute_molecule(request_data: Dict[str, Any]) -> Dict[str, Any]:
     
     # Build molecule command - execute directly on OIM host, not via podman exec
     # run_molecule.sh format: run_molecule.sh <scenario> <command> [--suite <suite>] [--marker <marker>]
+    # Sanitize scenario name to break taint chain (already validated in parse_request_file)
+    clean_scenario = sanitize_cmd_argument(str(scenario_names[0]), r'^[a-zA-Z0-9 _-]+$')
+    if clean_scenario is None:
+        raise ValueError("Scenario name failed sanitization")
+
     cmd = [
         "bash", "/opt/omnia/automation/run_molecule.sh",
-        scenario_names[0],  # First scenario
+        clean_scenario,
         "verify"  # Use verify command for validation stage
     ]
     
-    # Add test suite if specified
+    # Add test suite if specified — sanitize to break taint chain
     if test_suite:
-        cmd.extend(["--suite", test_suite])
+        clean_suite = sanitize_cmd_argument(str(test_suite), r'^[a-zA-Z0-9 _-]+$')
+        if clean_suite is None:
+            raise ValueError("test_suite value failed sanitization")
+        cmd.extend(["--suite", clean_suite])
     
     # Set environment variables
     env = os.environ.copy()
