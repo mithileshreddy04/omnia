@@ -379,7 +379,13 @@
     - name: Compute OIM host-side /etc/openchami backup path
       ansible.builtin.set_fact:
         upgrade_etc_openchami_backup: >-
-          {{ oim_host_backup_dir | default(openchami_backup_dir_default | regex_replace('^/opt/omnia', oim_shared_path ~ '/omnia')) }}/{{ backup_etc_openchami_subpath }}
+          {{
+            oim_host_backup_dir |
+            default(
+              openchami_backup_dir_default |
+              regex_replace('^/opt/omnia', oim_shared_path ~ '/omnia')
+            )
+          }}/{{ backup_etc_openchami_subpath }}
       when:
         - not (cluster_config_available | default(false) | bool)
 
