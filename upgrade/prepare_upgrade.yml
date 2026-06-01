@@ -78,8 +78,6 @@
           - "SECTION 1: FILES MIGRATED AUTOMATICALLY (no action required)"
           - "------------------------------------------------------------------------"
           - ""
-          - "The following files have been migrated from Omnia 2.1 to 2.2 format:"
-          - ""
           - "    ✓  provision_config.yml          - Migrated successfully"
           - "    ✓  high_availability_config.yml  - Migrated successfully"
           - "    ✓  omnia_config.yml              - Migrated successfully"
