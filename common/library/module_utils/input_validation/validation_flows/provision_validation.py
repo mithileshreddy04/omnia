@@ -317,6 +317,74 @@ def validate_duplicate_ib_ips_in_mapping_file(pxe_mapping_file_path):
         raise ValueError(f"Duplicate IB_IP found in PXE mapping file: {'; '.join(duplicates)}")
 
 
+def validate_ib_nic_name_format_in_mapping_file(pxe_mapping_file_path):
+    """Validates IB_NIC_NAME format structure in the mapping file.
+    
+    Validates that IB_NIC_NAME follows one of the supported formats:
+    - 'InfiniBand.PCIe.Slot.X-Y' (slot X, port Y)
+    - 'InfiniBand.Slot.X-Y' (slot X, port Y)  
+    - 'NIC.InfiniBand.X-Y' (slot X, port Y)
+    - 'InfiniBand.Single-Y' (single device, port Y)
+    
+    Only validates format structure, not specific slot/port ranges.
+    """
+    if not pxe_mapping_file_path or not os.path.isfile(pxe_mapping_file_path):
+        raise ValueError(f"PXE mapping file not found: {pxe_mapping_file_path}")
+
+    with open(pxe_mapping_file_path, "r", encoding="utf-8") as fh:
+        raw_lines = fh.readlines()
+
+    non_comment_lines = [ln for ln in raw_lines if ln.strip()]
+    reader = csv.DictReader(non_comment_lines)
+
+    fieldname_map = {fn.strip().upper(): fn for fn in reader.fieldnames}
+    ib_nic_col = fieldname_map.get("IB_NIC_NAME")
+    hostname_col = fieldname_map.get("HOSTNAME")
+
+    if not ib_nic_col:
+        return  # No IB_NIC_NAME column to validate
+
+    # Supported IB_NIC_NAME format patterns (updated to support hexadecimal slots)
+    slot_pattern = re.compile(r'^(InfiniBand\.PCIe\.Slot\.|InfiniBand\.Slot\.|NIC\.InfiniBand\.)([0-9a-fA-F]+)-([0-9]+)$')
+    single_pattern = re.compile(r'^InfiniBand\.Single-([0-9]+)$')
+
+    invalid_formats = []
+
+    for row_idx, row in enumerate(reader, start=2):
+        ib_nic_name = row.get(ib_nic_col, "").strip() if ib_nic_col and row.get(ib_nic_col) else ""
+        hostname = ""
+        if hostname_col:
+            hostname = row.get(hostname_col, "").strip() if hostname_col and row.get(hostname_col) else ""
+
+        # Skip empty IB_NIC_NAME (already handled by consistency validation)
+        if not ib_nic_name:
+            continue
+
+        # Check if format matches supported patterns
+        if slot_pattern.match(ib_nic_name):
+            # Valid slot-based format
+            continue
+        elif single_pattern.match(ib_nic_name):
+            # Valid single-device format
+            continue
+        else:
+            # Invalid format
+            hostname_disp = f" ({hostname})" if hostname else ""
+            invalid_formats.append(f"'{ib_nic_name}' at CSV row {row_idx}{hostname_disp}")
+
+    if invalid_formats:
+        raise ValueError(
+            f"Invalid IB_NIC_NAME format(s) found in PXE mapping file: {'; '.join(invalid_formats)}. "
+            f"Supported formats are: "
+            f"'InfiniBand.PCIe.Slot.X-Y', 'InfiniBand.Slot.X-Y', 'NIC.InfiniBand.X-Y', 'InfiniBand.Single-Y'. "
+            f"Slot numbers support decimal (22) and hexadecimal (b5, a0, ff) formats. "
+            f"Examples: 'InfiniBand.PCIe.Slot.22-1', 'InfiniBand.PCIe.Slot.b5-1', 'InfiniBand.Single-1'"
+        )
+
+
+
+
+
 def validate_group_parent_service_tag_consistency_in_mapping_file(pxe_mapping_file_path):
     """Validates that GROUP_NAME has a consistent PARENT_SERVICE_TAG across the mapping file."""
     if not pxe_mapping_file_path or not os.path.isfile(pxe_mapping_file_path):
@@ -847,6 +915,89 @@ def validate_aarch64_local_path_compatibility(pxe_mapping_file_path):
     if aarch64_found:
         raise ValueError(en_us_validation_msg.PXE_MAPPING_AARCH64_LOCAL_PATH_MSG)
 
+def validate_functional_groups_software_consistency(pxe_mapping_file_path, software_config_json, logger):
+    """
+    Validates that functional groups in the PXE mapping file have corresponding
+    software configured in software_config.json.
+    
+    This ensures that:
+    - If service_kube_node_* or service_kube_control_plane_* functional groups exist
+      in the mapping file, then 'service_k8s' must be in software_config.json
+    - If slurm_control_node_* or slurm_node_* functional groups exist in the mapping file,
+      then 'slurm_custom' must be in software_config.json
+    
+    Args:
+        pxe_mapping_file_path (str): Path to the PXE mapping file.
+        software_config_json (dict): Parsed software_config.json data.
+        logger (Logger): Logger instance for logging messages.
+        
+    Raises:
+        ValueError: If functional groups are defined without corresponding software.
+    """
+    if not pxe_mapping_file_path or not os.path.isfile(pxe_mapping_file_path):
+        return
+    
+    # Read the mapping file to find functional groups
+    with open(pxe_mapping_file_path, "r", encoding="utf-8") as fh:
+        raw_lines = fh.readlines()
+    
+    non_comment_lines = [ln for ln in raw_lines if ln.strip()]
+    if not non_comment_lines:
+        return
+    
+    reader = csv.DictReader(non_comment_lines)
+    fieldname_map = {fn.strip().upper(): fn for fn in reader.fieldnames}
+    fg_col = fieldname_map.get("FUNCTIONAL_GROUP_NAME")
+    
+    if not fg_col:
+        return
+    
+    # Track which functional groups are found
+    has_service_k8s_fg = False
+    has_slurm_fg = False
+    
+    for row in reader:
+        fg_name = row.get(fg_col, "").strip() if row.get(fg_col) else ""
+        if not fg_name:
+            continue
+        
+        # Check for service k8s functional groups
+        if fg_name.startswith('service_kube_node_') or fg_name.startswith('service_kube_control_plane_'):
+            has_service_k8s_fg = True
+            logger.info(f"Found service k8s functional group in mapping file: {fg_name}")
+        
+        # Check for slurm functional groups
+        if fg_name.startswith('slurm_control_node_') or fg_name.startswith('slurm_node_'):
+            has_slurm_fg = True
+            logger.info(f"Found slurm functional group in mapping file: {fg_name}")
+    
+    # Get list of software names from software_config.json
+    software_names = []
+    if software_config_json and "softwares" in software_config_json:
+        software_names = [sw.get("name", "") for sw in software_config_json.get("softwares", [])]
+    
+    logger.info(f"Software configured in software_config.json: {software_names}")
+    
+    # Validate service_k8s and slurm_custom, collecting all errors
+    consistency_errors = []
+
+    if has_service_k8s_fg and "service_k8s" not in software_names:
+        logger.error("Service k8s functional groups found but service_k8s not in software_config.json")
+        consistency_errors.append(en_us_validation_msg.SERVICE_K8S_FUNCTIONAL_GROUP_WITHOUT_SOFTWARE_MSG)
+
+    if has_slurm_fg and "slurm_custom" not in software_names:
+        logger.error("Slurm functional groups found but slurm_custom not in software_config.json")
+        consistency_errors.append(en_us_validation_msg.SLURM_FUNCTIONAL_GROUP_WITHOUT_SOFTWARE_MSG)
+
+    if consistency_errors:
+        raise ValueError(" | ".join(consistency_errors))
+
+    # Log success
+    if has_service_k8s_fg and "service_k8s" in software_names:
+        logger.info("✓ Service k8s functional groups validated: service_k8s found in software_config.json")
+    if has_slurm_fg and "slurm_custom" in software_names:
+        logger.info("✓ Slurm functional groups validated: slurm_custom found in software_config.json")
+
 def validate_provision_config(
     input_file_path, data, logger, module, omnia_base_dir, module_utils_base, project_name
 ):
@@ -919,11 +1070,13 @@ def validate_provision_config(
             validate_duplicate_hostnames_in_mapping_file(pxe_mapping_file_path)
             validate_duplicate_admin_ips_in_mapping_file(pxe_mapping_file_path)
             validate_duplicate_ib_ips_in_mapping_file(pxe_mapping_file_path)
+            validate_ib_nic_name_format_in_mapping_file(pxe_mapping_file_path)
             validate_group_parent_service_tag_consistency_in_mapping_file(pxe_mapping_file_path)
             validate_functional_groups_separation(pxe_mapping_file_path)
             validate_parent_service_tag_hierarchy(pxe_mapping_file_path)
             validate_slurm_login_compiler_prefix(pxe_mapping_file_path)
             validate_aarch64_local_path_compatibility(pxe_mapping_file_path)
+            validate_functional_groups_software_consistency(pxe_mapping_file_path, software_config_json, logger)
 
             # Validate ADMIN_IPs against network_spec.yml ranges
             # network_spec_path = create_file_path(input_file_path, file_names["network_spec"])
@@ -958,6 +1111,18 @@ def validate_provision_config(
                 en_us_validation_msg.DEFAULT_LEASE_TIME_FAIL_MSG,
             )
         )
+
+    kernel_version_override = data.get("kernel_version_override", "")
+    if kernel_version_override:
+        if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+-.+$", kernel_version_override):
+            errors.append(
+                create_error_msg(
+                    "kernel_version_override",
+                    kernel_version_override,
+                    en_us_validation_msg.KERNEL_VERSION_OVERRIDE_FAIL_MSG,
+                )
+            )
+
     return errors
 
 def validate_network_spec(

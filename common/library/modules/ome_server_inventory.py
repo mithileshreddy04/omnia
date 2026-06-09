@@ -140,6 +140,8 @@ class OMEClient:
         headers = {"Content-Type": "application/json"}
 
         response = self.session.post(auth_url, json=auth_payload, headers=headers)
+        # Clear password from memory after authentication attempt
+        self.password = None
         if response.status_code in [200, 201]:
             self.auth_token = response.headers.get("X-Auth-Token")
             self.session.headers.update({"X-Auth-Token": self.auth_token})
@@ -167,7 +169,7 @@ class OMEClient:
                                response.status_code, url, attempt, self.MAX_RETRIES)
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
                 logger.warning("Transient error fetching %s (attempt %d/%d): %s",
-                               url, attempt, self.MAX_RETRIES, exc)
+                               url, attempt, self.MAX_RETRIES, type(exc).__name__)
                 last_exc = exc
             if attempt < self.MAX_RETRIES:
                 time.sleep(self.BACKOFF_BASE ** attempt)
@@ -279,7 +281,7 @@ class OMEClient:
                 return data
         except Exception as exc:
             logger.warning("Failed to fetch inventory type '%s' for device %s: %s",
-                           inventory_type, device_id, exc)
+                           inventory_type, device_id, type(exc).__name__)
         return {}
 
     def get_device_management_info(self, device_id):
@@ -389,10 +391,13 @@ def extract_server_info(client, device, device_group_map=None):
         "model": device.get("Model", ""),
         "idrac_ip": "",
         "idrac_mac": "",
+        "idrac_link_status": "",
         "first_nic_name": "",
         "first_nic_mac": "",
+        "first_nic_link_status": "",
         "group_name": "",
-        "ib_nic_name": ""
+        "ib_nic_name": "",
+        "ib_nic_link_status": ""
     }
 
     # Get management IP from device info
@@ -402,6 +407,7 @@ def extract_server_info(client, device, device_group_map=None):
             if mgmt.get("ManagementType") == 2:  # iDRAC management
                 info["idrac_ip"] = mgmt.get("NetworkAddress", "")
                 info["idrac_mac"] = mgmt.get("MacAddress", "")
+                info["idrac_link_status"] = "Up"
                 mgmt_hostname = (
                     mgmt.get("InstrumentationName") or
                     mgmt.get("DnsName") or
@@ -418,6 +424,7 @@ def extract_server_info(client, device, device_group_map=None):
             if mgmt.get("ManagementType") == 2:
                 info["idrac_ip"] = mgmt.get("NetworkAddress", "")
                 info["idrac_mac"] = mgmt.get("MacAddress", "")
+                info["idrac_link_status"] = "Up"
                 mgmt_hostname = (
                     mgmt.get("InstrumentationName") or
                     mgmt.get("DnsName") or
@@ -434,9 +441,10 @@ def extract_server_info(client, device, device_group_map=None):
     # Find first non-iDRAC NIC with LinkStatus "Up"; fall back to first non-iDRAC NIC
     fallback_nic_name = ""
     fallback_nic_mac = ""
+    fallback_nic_link_status = ""
     for nic in nic_info_list:
         nic_id = nic.get("NicId", "")
-        if "iDRAC" not in nic_id.upper():
+        if "iDRAC" not in nic_id.upper() and "INFINIBAND" not in nic_id.upper():
             ports = nic.get("Ports", [])
             for port in ports:
                 partitions = port.get("Partitions", [])
@@ -449,11 +457,13 @@ def extract_server_info(client, device, device_group_map=None):
                 if not fallback_nic_mac:
                     fallback_nic_name = nic_id
                     fallback_nic_mac = mac
+                    fallback_nic_link_status = (port.get("LinkStatus") or "Unknown").strip()
                 # Prefer port with LinkStatus "Up"
-                link_status = (port.get("LinkStatus") or "").strip()
+                link_status = (port.get("LinkStatus") or "Unknown").strip()
                 if link_status.upper() == "UP":
                     info["first_nic_name"] = nic_id
                     info["first_nic_mac"] = mac
+                    info["first_nic_link_status"] = link_status
                     break
             if info["first_nic_mac"]:
                 break
@@ -461,31 +471,50 @@ def extract_server_info(client, device, device_group_map=None):
     if not info["first_nic_mac"] and fallback_nic_mac:
         info["first_nic_name"] = fallback_nic_name
         info["first_nic_mac"] = fallback_nic_mac
+        info["first_nic_link_status"] = fallback_nic_link_status
 
     # Fallback to deviceNics inventory type
     if not info["first_nic_mac"]:
         device_nics = client.get_device_inventory(device_id, "deviceNics")
         for nic in device_nics.get("InventoryInfo", []):
             nic_id = nic.get("NicId", "")
-            if "iDRAC" not in str(nic_id).upper():
+            if "iDRAC" not in str(nic_id).upper() and "INFINIBAND" not in str(nic_id).upper():
                 info["first_nic_name"] = nic_id
                 info["first_nic_mac"] = nic.get("MacAddress", "")
                 break
 
-    # Get InfiniBand NIC: FQDD contains "InfiniBand" and LinkStatus is Up
-    # Use port-level PortId (e.g. "InfiniBand.Slot.7-1") for precise identification
+    # Get InfiniBand NIC: FQDD contains "InfiniBand"
+    # Priority: Up (best) > Unknown (fallback) > Down/other (last resort)
+    # (iDRAC may report "Unknown" even when IB is active at OS level — OMN01D-2442)
+    _IB_STATUS_PRIORITY = {"UP": 0, "UNKNOWN": 1}
+    fallback_ib_nic_name = ""
+    fallback_ib_link_status = ""
+    fallback_ib_priority = 99
     for nic in nic_info_list:
         nic_id = nic.get("NicId", "")
         if "infiniband" not in nic_id.lower():
             continue
         for port in nic.get("Ports", []):
-            link_status = (port.get("LinkStatus") or "").strip()
-            if link_status.upper() == "UP":
-                port_id = port.get("PortId", "")
-                info["ib_nic_name"] = port_id if port_id else nic_id
+            port_id = port.get("PortId", "")
+            candidate = port_id if port_id else nic_id
+            link_status = (port.get("LinkStatus") or "Unknown").strip().upper()
+            if link_status == "UP":
+                info["ib_nic_name"] = candidate
+                info["ib_nic_link_status"] = "Up"
                 break
+            port_priority = _IB_STATUS_PRIORITY.get(link_status, 2)
+            if port_priority < fallback_ib_priority:
+                fallback_ib_nic_name = candidate
+                fallback_ib_link_status = (port.get("LinkStatus") or "Unknown").strip()
+                fallback_ib_priority = port_priority
+            elif port_priority == fallback_ib_priority and not fallback_ib_nic_name:
+                fallback_ib_nic_name = candidate
+                fallback_ib_link_status = (port.get("LinkStatus") or "Unknown").strip()
         if info["ib_nic_name"]:
             break
+    if not info["ib_nic_name"] and fallback_ib_nic_name:
+        info["ib_nic_name"] = fallback_ib_nic_name
+        info["ib_nic_link_status"] = fallback_ib_link_status
 
     # Get group name from pre-built device→group map
     if device_group_map:
@@ -514,13 +543,17 @@ def main():
         module.fail_json(msg="The 'requests' Python library is required for this module")
 
     ome_ip = module.params['ome_ip']
-    ome_username = module.params['ome_username']
-    ome_password = module.params['ome_password']
     device_type = module.params['device_type']
     verify_ssl = module.params['verify_ssl']
     page_size = module.params['page_size']
 
-    client = OMEClient(ome_ip, ome_username, ome_password, verify_ssl, page_size)
+    client = OMEClient(
+        ome_ip,
+        module.params['ome_username'],
+        module.params['ome_password'],
+        verify_ssl,
+        page_size
+    )
 
     try:
         if not client.authenticate():

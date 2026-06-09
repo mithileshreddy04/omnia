@@ -51,7 +51,7 @@
             {{ ochami_x86_64_image | join(' ') }} \
             {{ ochami_base_command | join(' ') }} \
             > '{{ openchami_x86_64_base_image_log_path }}' 2>&1
-      async: 3600
+      async: "{{ job_async }}"
       poll: 0
       register: base_image_build
       changed_when: true
@@ -66,7 +66,7 @@
 
     - name: Verify the x86_64 base osimage in registry
       ansible.builtin.command:
-        cmd: "regctl repo ls {{ oim_node_name }}.{{ domain_name }}:5000"
+        cmd: "/usr/local/bin/regctl repo ls {{ oim_node_name }}.{{ domain_name }}:5000"
       changed_when: false
       register: verify_base_osimage
 
