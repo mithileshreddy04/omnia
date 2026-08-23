@@ -121,8 +121,11 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
             host_map_file = ldmsd_conf["host_map_file"]
             with open(host_map_file, encoding='utf-8') as fh:
                 node_list = json.load(fh)
+            if not node_list:
+                logging.warning("Empty host map for %s — skipping aggregator config", ldmsd_name)
+                continue
             split = ldmsd_conf.get("agg_count", 1)
-            midpoint = len(node_list) // split
+            midpoint = max(1, len(node_list) // split)
             for index, sub_list in enumerate(self.split_list(node_list, midpoint)):
                 sub_host_map_file = host_map_file.replace(".json", f"-{index}.json")
                 with open(sub_host_map_file, 'w', encoding='utf-8') as fh:
@@ -144,7 +147,7 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
                 )
                 self.env.setdefault(ldmsd_name, {}).setdefault('agg', []).append({
                     'LDMSD_PORT': self.ldmsd_port,
-                    'LDMSD_HOST': f"nersc-ldms-aggr.{self.namespace}.svc.cluster.local",
+                    'LDMSD_HOST': f"nersc-ldms-aggr.{self.namespace}.svc",
                     'LDMSD_AUTH_PLUGIN': f"{auth_type}",
                     'LDMSD_AUTH_OPTION': f"{ldms_auth_option}",
                     'LDMSD_AUTH_SECRET': f"{auth_secret}",
@@ -176,6 +179,9 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
         logging.info("Make Store Configs")
         
         for ldmsd_name, ldmsd_conf in self.config['node_types'].items():
+            if ldmsd_name not in self.env or 'agg' not in self.env[ldmsd_name]:
+                logging.warning("No aggregator config for %s — skipping store config", ldmsd_name)
+                continue
             # grab auth data
             auth_type = ldmsd_conf.get('auth_type')
             auth_secret = ldmsd_conf.get('auth_secret')
@@ -211,7 +217,7 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
                     )
                     self.env.setdefault(ldmsd_name, {}).setdefault('store', []).append({
                         'LDMSD_PORT': self.store_port,
-                        'LDMSD_HOST': f"nersc-ldms-store-{ldmsd_name}-{store_pod_index}.nersc-ldms-store.{self.namespace}.svc.cluster.local",
+                        'LDMSD_HOST': f"nersc-ldms-store-{ldmsd_name}-{store_pod_index}.nersc-ldms-store.{self.namespace}.svc",
                         'LDMSD_AUTH_PLUGIN': auth_type,
                         'LDMSD_AUTH_SECRET': f"{auth_secret}",
                         'LDMSD_AUTH_SECRET_FILE' : f"{auth_secret_file}",
@@ -257,7 +263,7 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
     #             f"auth_add name={auth_secret} plugin=munge socket=/run/{auth_secret}/munge.socket",
     #         ])
     #     #--------
-    #     ldms_host = "nersc-ldms-aggr.sma.svc.cluster.local"
+    #     ldms_host = "nersc-ldms-aggr.sma.svc"
     #     for k, v in self.env.items():  #  k: application, compute-cpu, compute-gpu, management
     #         if k == "stream":
     #             continue
@@ -312,7 +318,7 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
     #     self.env.setdefault('stream', [])
     #     self.env['stream'].append({
     #         'LDMSD_PORT': 60001,
-    #         'LDMSD_HOST': f"nersc-ldms-stream-0.nersc-ldms-stream.{self.namespace}.svc.cluster.local",
+    #         'LDMSD_HOST': f"nersc-ldms-stream-0.nersc-ldms-stream.{self.namespace}.svc",
     #         'LDMSD_AUTH_PLUGIN': auth_type,
     #         'LDMSD_AUTH_SECRET': f"{auth_secret}",
     #         'LDMSD_AUTH_SECRET_FILE' : f"{auth_secret_file}",
@@ -561,7 +567,7 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
             "load name=store_avro_kafka",
             "config name=store_avro_kafka encoding=json topic=ldms kafka_conf=/ldms_bin/kafka.conf",
             f"strgp_add name=kafka regex=.* plugin=store_avro_kafka "
-            f"container=kafka-kafka-bootstrap.{self.namespace}.svc.cluster.local:9093 "
+            f"container=kafka-kafka-bootstrap.{self.namespace}.svc:9093 "
             "decomposition=/ldms_bin/decomp.json",
             "strgp_start name=kafka"
         ])
@@ -588,7 +594,7 @@ class LdmsdManager:  # pylint: disable=too-many-instance-attributes
                 ldms_auth_option = ""
 
             cfg.append(f"auth_add name={ldmsd_name} plugin={auth_type} {ldms_auth_option}")
-            ldms_host = f"nersc-ldms-aggr.{self.namespace}.svc.cluster.local"
+            ldms_host = f"nersc-ldms-aggr.{self.namespace}.svc"
             for k, v in self.env.items():
                 if k == "stream":
                     continue

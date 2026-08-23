@@ -48,49 +48,39 @@
         ansible_user: root
       when: kube_vip_group is not defined
 
-    - name: Check if slurm inventory file exists
-      ansible.builtin.stat:
-        path: "{{ slurm_inventory_file }}"
-      register: slurm_inv_stat
-      delegate_to: localhost
-
-    - name: Load slurm inventory for aggregator/sampler node delegation
-      when: slurm_inv_stat.stat.exists
+    - name: Load Slurm nodes from cluster inventory
+      when: hostvars['localhost']['cluster_inv'] is defined
+      vars:
+        _ci: "{{ hostvars['localhost']['cluster_inv'].all.children }}"
       block:
-        - name: Read slurm inventory
-          ansible.builtin.include_vars:
-            file: "{{ slurm_inventory_file }}"
-            name: slurm_inv
-
         - name: Add Slurm control nodes to in-memory inventory
           ansible.builtin.add_host:
             name: "{{ item.value.ansible_host | default(item.key) }}"
             groups: slurm_control_node
             ansible_user: root
-          loop: "{{ slurm_inv.all.children.slurm_control_node_x86_64.hosts | default({}) | dict2items }}"
+          loop: >-
+            {{
+              (_ci.slurm_control_node.hosts | default({})) |
+              combine(_ci.slurm_control_node_x86_64.hosts | default({})) |
+              dict2items
+            }}
           loop_control:
             label: "{{ item.key }}"
-          when: slurm_inv.all.children.slurm_control_node_x86_64.hosts is defined
 
         - name: Add Slurm compute nodes to in-memory inventory
           ansible.builtin.add_host:
             name: "{{ item.value.ansible_host | default(item.key) }}"
             groups: slurm_node
             ansible_user: root
-          loop: "{{ slurm_inv.all.children.slurm_node_x86_64.hosts | default({}) | dict2items }}"
+          loop: >-
+            {{
+              (_ci.slurm_node.hosts | default({})) |
+              combine(_ci.slurm_node_x86_64.hosts | default({})) |
+              combine(_ci.slurm_node_aarch64.hosts | default({})) |
+              dict2items
+            }}
           loop_control:
             label: "{{ item.key }}"
-          when: slurm_inv.all.children.slurm_node_x86_64.hosts is defined
-
-        - name: Add aarch64 Slurm compute nodes to in-memory inventory
-          ansible.builtin.add_host:
-            name: "{{ item.value.ansible_host | default(item.key) }}"
-            groups: slurm_node
-            ansible_user: root
-          loop: "{{ slurm_inv.all.children.slurm_node_aarch64.hosts | default({}) | dict2items }}"
-          loop_control:
-            label: "{{ item.key }}"
-          when: slurm_inv.all.children.slurm_node_aarch64.hosts is defined
   tasks:
     - name: Check if Kafka is needed for LDMS telemetry
       ansible.builtin.set_fact:
@@ -135,11 +125,22 @@
   gather_facts: true
   any_errors_fatal: true
   tasks:
+    - name: Load telemetry configuration
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: load_telemetry_config
+      when: telemetry_config is not defined
+
     - name: Set telemetry credentials from localhost
       ansible.builtin.set_fact:
         telemetry_credentials: "{{ hostvars['localhost']['telemetry_credentials'] }}"
       no_log: true
       when: hostvars['localhost']['telemetry_credentials'] is defined
+
+    - name: Set cluster_mount from localhost
+      ansible.builtin.set_fact:
+        cluster_mount: "{{ hostvars['localhost']['cluster_mount'] }}"
+      when: hostvars['localhost']['cluster_mount'] is defined
 
     - name: Configure LDMS aggregator on control node
       ansible.builtin.include_role:
@@ -151,11 +152,22 @@
   gather_facts: true
   any_errors_fatal: true
   tasks:
+    - name: Load telemetry configuration
+      ansible.builtin.include_role:
+        name: common
+        tasks_from: load_telemetry_config
+      when: telemetry_config is not defined
+
     - name: Set telemetry credentials from localhost
       ansible.builtin.set_fact:
         telemetry_credentials: "{{ hostvars['localhost']['telemetry_credentials'] }}"
       no_log: true
       when: hostvars['localhost']['telemetry_credentials'] is defined
+
+    - name: Set cluster_mount from localhost
+      ansible.builtin.set_fact:
+        cluster_mount: "{{ hostvars['localhost']['cluster_mount'] }}"
+      when: hostvars['localhost']['cluster_mount'] is defined
 
     - name: Configure LDMS sampler on compute nodes
       ansible.builtin.include_role:

@@ -39,8 +39,9 @@ common_mode: "0755"
 ldms_aggregator_name: "nersc-ldms-aggr"
 ldms_store_name: "nersc-ldms-store"
 
-# Slurm config path (for munge key)
+# Slurm / munge paths
 slurm_config_path: "/etc/slurm"
+munge_key_path: "/etc/munge/munge.key"
 
 # LDMS backup path for PXE change detection
 backup_pxe_mapping_ldms_path: "{{ telemetry_data_path | default('/opt/omnia/telemetry') }}/backup_pxe_mapping_ldms.csv"
@@ -75,10 +76,25 @@ vector:
       limits:
         cpu: "{{ telemetry_storage_config.vector_storage.ldms.resources.limits.cpu | default('500m') }}"
         memory: "{{ telemetry_storage_config.vector_storage.ldms.resources.limits.memory | default('512Mi') }}"
-  # vmagent-vector reference (shared write-buffer agent)
+  # vmagent-vector: dedicated write-buffer for Vector → vminsert (metrics)
   vmagent_vector:
     service_name: "vmagent-vector"
     port: 8429
+    replicas: 2
+    image: "{{ (hostvars['localhost']['telemetry_registry'].images.victoria.vmagent | default('docker.io/victoriametrics/vmagent:v1.149.0')) }}"
+    remote_write_url: "http://vminsert-victoria-cluster.{{ telemetry_namespace }}.svc:8480/insert/0/prometheus/api/v1/write"
+    tmp_data_path: "/tmp/vmagent-buffer"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "256Mi"
+
+# Victoria cluster TLS setting (used by vmagent-vector template)
+victoria_cluster:
+  tls_enabled: false
 
 # Verification timeouts
 ldms_deploy_timeout: "600s"

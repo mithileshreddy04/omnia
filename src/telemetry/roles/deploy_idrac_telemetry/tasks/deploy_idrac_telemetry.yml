@@ -25,6 +25,11 @@
   changed_when: "'created' in ns_result.stdout"
   failed_when: false
 
+- name: Apply MySQL credentials secret before iDRAC kustomization
+  ansible.builtin.command: kubectl apply -f {{ telemetry_deployments_dir }}/telemetry_secret_creation.yaml
+  register: secret_apply_result
+  changed_when: "'created' in secret_apply_result.stdout or 'configured' in secret_apply_result.stdout"
+
 - name: Apply iDRAC telemetry using kustomization
   ansible.builtin.command: kubectl apply -k {{ telemetry_deployments_dir }}/idrac/
   register: idrac_deploy_result

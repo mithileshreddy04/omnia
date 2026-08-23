@@ -73,9 +73,9 @@
     dest: "{{ ldms_share_path }}/nersc-ldms-aggr/values.yaml"
     mode: "{{ file_permissions_644 }}"
 
-- name: Copy munge key from slurm config
+- name: Copy munge key to LDMS share
   ansible.builtin.copy:
-    src: "{{ slurm_config_path }}/munge.key"
+    src: "{{ munge_key_path }}"
     dest: "{{ ldms_share_path }}/munge.key"
     mode: "{{ file_permissions_400 }}"
     remote_src: true

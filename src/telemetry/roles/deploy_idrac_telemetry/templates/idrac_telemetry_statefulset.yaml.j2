@@ -211,7 +211,7 @@ spec:
             - name: MESSAGEBUS_PORT
               value: "{{ messagebus_http_port }}"
             - name: KAFKA_BROKER
-              value: "kafka-kafka-bootstrap.telemetry.svc.cluster.local:9093"
+              value: "kafka-kafka-bootstrap.{{ telemetry_namespace }}.svc:9093"
             - name: KAFKA_TOPIC
               value: "{{ kafka.topics.idrac.name }}"
             # TLS configuration - using iDRAC Telemetry Reference Tools standard env var names

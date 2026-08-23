@@ -32,6 +32,14 @@
     state: directory
     mode: "0755"
 
+- name: Render MySQL credentials Secret to root deployments dir
+  ansible.builtin.template:
+    src: "{{ role_path }}/templates/telemetry_secret_creation.yaml.j2"
+    dest: "{{ telemetry_deployments_dir }}/telemetry_secret_creation.yaml"
+    mode: "0644"
+    force: true
+  no_log: true
+
 - name: Render ActiveMQ ConfigMap
   ansible.builtin.template:
     src: "{{ role_path }}/templates/activemq-config.yaml.j2"
@@ -57,5 +65,4 @@
   ansible.builtin.debug:
     msg: >
       iDRAC telemetry manifests generated at {{ telemetry_deployments_dir }}/idrac/:
-      activemq-config.yaml, idrac_telemetry_statefulset.yaml,
-      telemetry_secret_creation.yaml, kustomization.yaml
+      activemq-config.yaml, idrac_telemetry_statefulset.yaml, kustomization.yaml

@@ -15,7 +15,7 @@ data_dir = "/var/lib/vector"
 # ============================================================================
 [sources.kafka_ldms]
 type = "kafka"
-bootstrap_servers = "kafka-kafka-bootstrap.{{ telemetry_namespace }}.svc.cluster.local:9093"
+bootstrap_servers = "kafka-kafka-bootstrap.{{ telemetry_namespace }}.svc:9093"
 group_id = "{{ vector.ldms.consumer_group }}"
 topics = ["{{ vector.ldms.kafka_topic }}"]
 auto_offset_reset = "earliest"
@@ -134,7 +134,7 @@ inputs = ["ldms_fan_out"]
 [sinks.victoria_metrics]
 type = "prometheus_remote_write"
 inputs = ["ldms_to_metrics"]
-endpoint = "http://{{ vector.vmagent_vector.service_name }}.{{ telemetry_namespace }}.svc.cluster.local:{{ vector.vmagent_vector.port }}/api/v1/write"
+endpoint = "http://{{ vector.vmagent_vector.service_name }}.{{ telemetry_namespace }}.svc:{{ vector.vmagent_vector.port }}/api/v1/write"
 # Healthcheck disabled: vmagent returns 204 No Content which Vector
 # treats as an error (expects 200). This is benign — vmagent is healthy.
 healthcheck.enabled = false

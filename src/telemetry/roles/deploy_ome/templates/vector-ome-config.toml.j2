@@ -22,7 +22,7 @@ data_dir = "/var/lib/vector"
 # ============================================================================
 [sources.kafka_ome]
 type = "kafka"
-bootstrap_servers = "kafka-kafka-bootstrap.{{ telemetry_namespace }}.svc.cluster.local:9093"
+bootstrap_servers = "kafka-kafka-bootstrap.{{ telemetry_namespace }}.svc:9093"
 group_id = "{{ vector.ome.consumer_group }}"
 topics = ['{{ vector.ome.kafka_topics_pattern }}']
 auto_offset_reset = "earliest"
@@ -268,7 +268,7 @@ inputs = ["ome_topic_router._unmatched"]
 [sinks.victoria_metrics]
 type = "prometheus_remote_write"
 inputs = ["ome_to_metrics"]
-endpoint = "http://{{ vector.vmagent_vector.service_name }}.{{ telemetry_namespace }}.svc.cluster.local:{{ vector.vmagent_vector.port }}/api/v1/write"
+endpoint = "http://{{ vector.vmagent_vector.service_name }}.{{ telemetry_namespace }}.svc:{{ vector.vmagent_vector.port }}/api/v1/write"
 healthcheck.enabled = false
 
 [sinks.victoria_metrics.batch]
@@ -291,7 +291,7 @@ timeout_secs = 60
 [sinks.victoria_logs]
 type = "http"
 inputs = ["ome_log_enricher"]
-uri = "http://{{ vector.vlagent_vector.service_name }}.{{ telemetry_namespace }}.svc.cluster.local:{{ vector.vlagent_vector.port }}/insert/jsonline"
+uri = "http://{{ vector.vlagent_vector.service_name }}.{{ telemetry_namespace }}.svc:{{ vector.vlagent_vector.port }}/insert/jsonline"
 method = "post"
 healthcheck.enabled = false
 

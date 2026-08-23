@@ -67,7 +67,7 @@ repo_url: ""
 # -----------------------------------------------------------------------------
 # Local mount point on Kubernetes cluster nodes (already-mounted NFS share).
 # Telemetry stages Helm charts and packages at: <cluster_mount>/telemetry/
-cluster_mount: "/share_omnia_k8s"
+cluster_mount: "/opt/omnia/k8s_mount"
 
 # =============================================================================
 # Container Images

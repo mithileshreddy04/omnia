@@ -86,7 +86,7 @@
 #
 # Required format: Ansible YAML inventory
 # Example: /omnia/src/telemetry/input/orchestrator_inventory.yml
-cluster_inventory: ""
+cluster_inventory: "/root/automation-testing/omnia/src/telemetry/input/orchestrator_inventory.yml"
 
 # ============================================================================
 # TELEMETRY SOURCES (Data Collectors)
@@ -142,7 +142,7 @@ telemetry_sources:
   dcgm:
     # Enable or disable DCGM metrics collection
     # Default: true
-    metrics_enabled: true
+    metrics_enabled: false
 
   # --------------------------------------------------------------------------
   # PowerScale — Dell PowerScale (OneFS) storage telemetry
@@ -153,11 +153,11 @@ telemetry_sources:
   powerscale:
     # Enable or disable PowerScale metrics collection
     # Default: true
-    metrics_enabled: true
+    metrics_enabled: false
 
     # Enable or disable PowerScale logs collection
     # Default: true
-    logs_enabled: true
+    logs_enabled: false
 
     # PowerScale uses vmagent(shared) (no Kafka, no Vector)
     collection_targets:
@@ -223,11 +223,11 @@ telemetry_sources:
   ome:
     # Enable or disable OME metrics collection
     # Default: true
-    metrics_enabled: true
+    metrics_enabled: false
 
     # Enable or disable OME logs collection
     # Default: true
-    logs_enabled: true
+    logs_enabled: false
 
     # OME only supports Kafka collection (no direct victoria_metrics/victoria_logs path)
     # Vector-OME bridge consumes from Kafka and routes to victoria_metrics/victoria_logs
@@ -269,11 +269,11 @@ telemetry_bridges:
     # Enable or disable Vector-OME metrics routing
     # Requires: OME to be configured with kafka
     # Default: true
-    metrics_enabled: true
+    metrics_enabled: false
 
     # Enable or disable Vector-OME logs routing
     # Default: true
-    logs_enabled: true
+    logs_enabled: false
 
     # Identifier used by Vector-OME for topic identification and routing.
     # Default: "ome" — internally used to match topics with the prefix (e.g., "^ome\\..*$")
