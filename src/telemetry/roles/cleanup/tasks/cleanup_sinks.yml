@@ -277,17 +277,17 @@
         )
       }}
   ansible.builtin.debug:
-    msg:
-      - "======================================================"
-      - "Sink Cleanup — Blocked Sinks Report"
-      - "======================================================"
-      - "{{ _blocked_report | length }} sink(s) blocked by running sources:"
-      - "{% for b in _blocked_report %}"
-      - "  {{ b.sink }}: {{ b.sources | join(', ') }}"
-      - "{% endfor %}"
-      - ""
-      - "Stop or clean up the listed source(s) before retrying."
-      - "======================================================"
+    msg: >-
+      ======================================================
+      Sink Cleanup — Blocked Sinks Report
+      ======================================================
+      {{ _blocked_report | length }} sink(s) blocked by running sources:
+      {% for b in _blocked_report -%}
+      {{ b.sink }}: {{ b.sources | join(', ') }}
+      {% endfor -%}
+      Stop or clean up the listed source(s) before retrying.
+      ======================================================"
+
   when:
     - hostvars['localhost']['_cleanup_sinks'] | default(false) | bool
     - >-
