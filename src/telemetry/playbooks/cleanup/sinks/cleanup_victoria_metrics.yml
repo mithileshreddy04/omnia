@@ -14,18 +14,16 @@
 ---
 
 # =============================================================================
-# VictoriaMetrics Cleanup
+# VictoriaMetrics Cleanup (DEPRECATED)
 # =============================================================================
-# Removes VictoriaMetrics resources. PVCs are removed only with Delete_volume=true.
+# This standalone playbook is deprecated. Use the unified cleanup_sinks flow:
+#   ansible-playbook telemetry.yml --tags cleanup_sinks -e sinks=victoria_metrics
 #
-# Standalone usage:
-#   ansible-playbook cleanup/sinks/cleanup_victoria_metrics.yml
-#
-# Via main cleanup (tag-based):
-#   ansible-playbook cleanup/cleanup.yml --tags cleanup_victoria_metrics
+# This playbook bypasses dependency checking. For safe sink cleanup with
+# runtime source detection, always use the cleanup_sinks tag.
 # =============================================================================
 
-- name: "Cleanup VictoriaMetrics"
+- name: "Cleanup VictoriaMetrics (deprecated — use cleanup_sinks)"
   hosts: kube_vip_group
   gather_facts: false
   tasks:

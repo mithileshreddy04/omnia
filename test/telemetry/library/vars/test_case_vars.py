@@ -465,6 +465,67 @@ TEST_CASES = {
         "id": "TEL_FVT_CLEANUP_V005",
         "title": "Verify VictoriaLogs pods removed after cleanup",
     },
+    # -- Cleanup: Sink dependency checking ----------------------------------
+    "cleanup_sinks_kafka_no_deps": {
+        "id": "TEL_FVT_CLEANUP_V019",
+        "title": "Verify Kafka cleanup allowed when no dependent sources running",
+    },
+    "cleanup_sinks_kafka_blocked": {
+        "id": "TEL_FVT_CLEANUP_V020",
+        "title": "Verify Kafka cleanup blocked when dependent source running",
+    },
+    "cleanup_sinks_kafka_multi_blocked": {
+        "id": "TEL_FVT_CLEANUP_V021",
+        "title": "Verify Kafka cleanup blocked by multiple dependent sources",
+    },
+    "cleanup_sinks_kafka_volumes_preserved": {
+        "id": "TEL_FVT_CLEANUP_V022",
+        "title": "Verify Kafka volumes preserved by default",
+    },
+    "cleanup_sinks_kafka_volumes_deleted": {
+        "id": "TEL_FVT_CLEANUP_V023",
+        "title": "Verify Kafka volumes deleted with delete_sinks_volume=true",
+    },
+    "cleanup_sinks_vm_no_deps": {
+        "id": "TEL_FVT_CLEANUP_V024",
+        "title": "Verify VictoriaMetrics cleanup allowed when no dependent sources",
+    },
+    "cleanup_sinks_vm_blocked": {
+        "id": "TEL_FVT_CLEANUP_V025",
+        "title": "Verify VictoriaMetrics cleanup blocked by dependent source",
+    },
+    "cleanup_sinks_vm_multi_blocked": {
+        "id": "TEL_FVT_CLEANUP_V026",
+        "title": "Verify VictoriaMetrics cleanup blocked by multiple sources",
+    },
+    "cleanup_sinks_vl_no_deps": {
+        "id": "TEL_FVT_CLEANUP_V027",
+        "title": "Verify VictoriaLogs cleanup allowed when no dependent sources",
+    },
+    "cleanup_sinks_vl_blocked": {
+        "id": "TEL_FVT_CLEANUP_V028",
+        "title": "Verify VictoriaLogs cleanup blocked by dependent source",
+    },
+    "cleanup_sinks_dep_check_fail": {
+        "id": "TEL_FVT_CLEANUP_V029",
+        "title": "Verify sinks preserved on dependency check failure",
+    },
+    "cleanup_sinks_unrelated_running": {
+        "id": "TEL_FVT_CLEANUP_V030",
+        "title": "Verify unrelated sources do not block sink cleanup",
+    },
+    "cleanup_sinks_repeated": {
+        "id": "TEL_FVT_CLEANUP_V031",
+        "title": "Verify repeated sink cleanup is idempotent",
+    },
+    "cleanup_sinks_selective_isolation": {
+        "id": "TEL_FVT_CLEANUP_V032",
+        "title": "Verify selective sink cleanup does not affect other sinks",
+    },
+    "cleanup_sinks_blocked_volumes_protected": {
+        "id": "TEL_FVT_CLEANUP_V033",
+        "title": "Verify volumes protected during blocked cleanup with delete_sinks_volume=true",
+    },
     # -- Cleanup: Sources ---------------------------------------------------
     "cleanup_idrac": {
         "id": "TEL_FVT_CLEANUP_V006",
