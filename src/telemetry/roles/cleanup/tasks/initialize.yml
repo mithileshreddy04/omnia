@@ -118,7 +118,14 @@
 
 - name: Debug - Display detected sinks
   ansible.builtin.debug:
-    msg: "Detected sinks: {{ _cleanup_sinks_requested }}"
+    msg: |
+      Detected sinks: {{ _cleanup_sinks_requested }}
+      kafka is defined: {{ kafka is defined }}
+      kafka is not mapping: {{ kafka is not mapping if kafka is defined else 'N/A' }}
+      victoria_metrics is defined: {{ victoria_metrics is defined }}
+      victoria_metrics is not mapping: {{ victoria_metrics is not mapping if victoria_metrics is defined else 'N/A' }}
+      victoria_logs is defined: {{ victoria_logs is defined }}
+      victoria_logs is not mapping: {{ victoria_logs is not mapping if victoria_logs is defined else 'N/A' }}
   when: _cleanup_sinks | bool
 
 - name: Validate requested sink names
