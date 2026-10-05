@@ -82,7 +82,7 @@ all:
 ```yaml
 karaviMetricsPowerscale:
   enabled: true
-  image: quay.io/dell/container-storage-modules/csm-metrics-powerscale:v1.12.0
+  image: quay.io/dell/container-storage-modules/csm-metrics-powerscale:v1.13.0
   collectorAddr: otel-collector:55680
   provisionerNames: csi-isilon.dellemc.com
   capacityMetricsEnabled: "true"
@@ -91,7 +91,7 @@ karaviMetricsPowerscale:
   authorization:
     enabled: false
     sidecarProxy:
-      image: quay.io/dell/container-storage-modules/csm-authorization-sidecar:v2.5.0
+      image: quay.io/dell/container-storage-modules/csm-authorization-sidecar:v2.6.0
     proxyHost:
     skipCertificateValidation: true
 
